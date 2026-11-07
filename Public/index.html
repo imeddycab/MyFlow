@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07110d">
+  <meta name="description" content="Planifica rutinas, registra entrenamientos y sigue tu progreso con MyFlow.">
+  <link rel="icon" href="/assets/favicon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/app.css">
+  <title>MyFlow · Entrenamiento</title>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#inicio"><span class="brand-mark">↗</span><b>MyFlow</b></a>
+      <p class="nav-label">ENTRENAMIENTO</p>
+      <nav id="navigation">
+        <button data-page="inicio" class="active"><span>⌂</span>Inicio</button>
+        <button data-page="rutinas"><span>▤</span>Rutinas</button>
+        <button data-page="entrenar"><span>◉</span>Entrenar</button>
+        <button data-page="biblioteca"><span>▣</span>Biblioteca</button>
+        <button data-page="progreso"><span>▥</span>Progreso</button>
+        <button data-page="historial"><span>◷</span>Historial</button>
+        <button data-page="calendario"><span>▦</span>Calendario</button>
+        <button data-page="perfil"><span>◉</span>Perfil</button>
+        <button data-page="herramientas"><span>⌘</span>Herramientas</button>
+      </nav>
+      <div class="sidebar-bottom"><span class="status-dot"></span><span>Sincronizado con MyFlow</span></div>
+    </aside>
+    <main>
+      <header class="topbar"><div><span class="eyebrow">TU ESPACIO DE ENTRENAMIENTO</span><h1 id="page-title">Inicio</h1></div><div class="profile-chip"><button id="theme-button" class="theme-button" aria-label="Cambiar tema">◐</button><button data-page="perfil" class="avatar" id="profile-initials">--</button><b id="profile-name-text">Mi perfil</b></div></header>
+      <div id="notice" class="notice" hidden role="status" aria-live="polite"></div>
+      <section id="view" aria-live="polite"></section>
+    </main>
+  </div>
+  <nav class="mobile-nav" id="mobile-navigation">
+    <button data-page="inicio" class="active"><span>⌂</span>Inicio</button><button data-page="rutinas"><span>▤</span>Rutinas</button><button data-page="entrenar"><span>◉</span>Entrenar</button><button data-page="historial"><span>◷</span>Historial</button><button id="more-button" aria-expanded="false"><span>•••</span>Más</button>
+    <div class="more-menu" id="more-menu" hidden>
+      <button data-page="biblioteca">Biblioteca</button><button data-page="progreso">Progreso</button><button data-page="calendario">Calendario</button><button data-page="perfil">Perfil</button><button data-page="herramientas">Herramientas</button>
+    </div>
+  </nav>
+  <dialog id="welcome-dialog" class="welcome-dialog"><form id="welcome-form"><div class="welcome-mark">↗</div><span class="eyebrow">BIENVENIDO A MYFLOW</span><h2>¿Cómo te llamas?</h2><p>Usaremos tu nombre en tu perfil y en tus resúmenes de entrenamiento.</p><label>Tu nombre<input name="name" required maxlength="60" autocomplete="given-name" autofocus placeholder="Escribe tu nombre"></label><button class="button" type="submit">Continuar</button></form></dialog>
+  <dialog id="routine-dialog">
+    <form id="routine-form">
+      <header class="dialog-head"><div><span class="eyebrow">PLANIFICACIÓN</span><h2 id="dialog-title">Crear rutina</h2></div><button class="icon-button" type="button" data-close="routine-dialog" aria-label="Cerrar">×</button></header>
+      <input type="hidden" name="id">
+      <label>Nombre de la rutina<input name="name" required maxlength="60" placeholder="Ej. Push Day"></label>
+      <label>Descripción<input name="description" maxlength="120" placeholder="Grupos musculares o enfoque"></label>
+      <label>Día de entrenamiento<select name="day"><option value="">Sin día asignado</option><option>Lunes</option><option>Martes</option><option>Miércoles</option><option>Jueves</option><option>Viernes</option><option>Sábado</option><option>Domingo</option></select></label>
+      <div class="editor-heading"><div><h3>Ejercicios</h3><p>Elige del catálogo o crea uno propio</p></div></div>
+      <div class="routine-exercise-picker"><label for="routine-exercise-picker">Seleccionar ejercicio<select id="routine-exercise-picker"><option value="">Elige un ejercicio…</option></select></label><button type="button" class="button secondary" id="add-routine-exercise" disabled>Añadir</button><button type="button" class="button secondary" id="add-new-routine-exercise">＋ Crear ejercicio</button></div>
+      <div id="routine-exercises" class="routine-exercise-list"></div>
+      <footer><button class="button secondary" type="button" data-close="routine-dialog">Cancelar</button><button class="button" type="submit">Guardar rutina</button></footer>
+    </form>
+  </dialog>
+  <dialog id="rest-dialog"><form id="rest-form"><header class="dialog-head"><div><span class="eyebrow">TEMPORIZADOR</span><h2>Descanso entre series</h2></div><button class="icon-button" type="button" data-close="rest-dialog" aria-label="Cerrar">×</button></header><div class="timer-presets"><button type="button" class="button secondary" data-timer-preset="30">30 s</button><button type="button" class="button secondary" data-timer-preset="60">1 min</button><button type="button" class="button secondary" data-timer-preset="90">1.5 min</button><button type="button" class="button secondary" data-timer-preset="120">2 min</button><button type="button" class="button secondary" data-timer-preset="180">3 min</button></div><label>Duración en segundos<input name="seconds" type="number" min="5" max="900" step="5" value="90"></label><footer><button class="button secondary" type="button" data-close="rest-dialog">Cancelar</button><button class="button" type="submit">Iniciar temporizador</button></footer></form></dialog>
+  <dialog id="exercise-dialog"><form id="exercise-form"><header class="dialog-head"><div><span class="eyebrow">BIBLIOTECA</span><h2>Nuevo ejercicio</h2></div><button class="icon-button" type="button" data-close="exercise-dialog" aria-label="Cerrar">×</button></header><label>Nombre<input name="name" required maxlength="60"></label><label>Grupo muscular<select name="muscle"><option>Pecho</option><option>Espalda</option><option>Cuádriceps</option><option>Isquiotibiales</option><option>Glúteos</option><option>Hombros</option><option>Bíceps</option><option>Tríceps</option><option>Abdomen</option></select></label><label>Equipamiento<select name="equipment"><option>Barra</option><option>Mancuernas</option><option>Polea</option><option>Máquina</option><option>Peso corporal</option></select></label><footer><button type="button" class="button secondary" data-close="exercise-dialog">Cancelar</button><button class="button" type="submit">Guardar ejercicio</button></footer></form></dialog>
+  <script src="/share-result.js"></script>
+  <script src="/app.js" defer></script>
+</body>
+</html>

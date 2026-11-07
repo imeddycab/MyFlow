@@ -1,0 +1,10 @@
+{
+  "name": "MyFlow — Workout Tracker",
+  "short_name": "MyFlow",
+  "description": "Planifica rutinas, registra entrenamientos y sigue tu progreso.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07110d",
+  "theme_color": "#07110d",
+  "icons": [{ "src": "/assets/favicon.png", "sizes": "96x96", "type": "image/png", "purpose": "any" }]
+}

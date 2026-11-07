@@ -4,7 +4,12 @@
   "description": "Planifica rutinas, registra entrenamientos y sigue tu progreso.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#07110d",
-  "theme_color": "#07110d",
-  "icons": [{ "src": "/assets/favicon.png", "sizes": "96x96", "type": "image/png", "purpose": "any" }]
+  "background_color": "#f5f5f5",
+  "theme_color": "#f5f5f5",
+  "icons": [
+    { "src": "/assets/favicon.png", "sizes": "96x96", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
 }

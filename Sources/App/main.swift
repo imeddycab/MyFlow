@@ -185,7 +185,7 @@ struct MyFlowApp {
                 var response = Response(status: .serviceUnavailable)
                 response.headers.contentType = .html
                 response.body = .init(string: """
-                <!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MyFlow · Interfaz faltante</title><body style="font:16px system-ui;max-width:680px;margin:12vh auto;padding:24px;color:#183226;background:#f3f2e9"><h1>No se encuentra la interfaz de MyFlow</h1><p>Revisa que los archivos <code>index.html</code>, <code>app.css</code> y <code>app.js</code> estén dentro de la carpeta <code>Public/</code>, junto a este servidor Swift.</p></body></html>
+                <!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MyFlow · Interfaz faltante</title><body style="font:16px system-ui;max-width:680px;margin:12vh auto;padding:24px;color:#111111;background:#f5f5f5"><h1>No se encuentra la interfaz de MyFlow</h1><p>Revisa que los archivos <code>index.html</code>, <code>app.css</code> y <code>app.js</code> estén dentro de la carpeta <code>Public/</code>, junto a este servidor Swift.</p></body></html>
                 """)
                 return response
             }

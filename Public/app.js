@@ -1,3 +1,7 @@
+import { auth, firestore, googleProvider } from "./firebase.js"
+import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-auth.js"
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-firestore.js"
+
 const view = document.querySelector("#view")
 const title = document.querySelector("#page-title")
 const notice = document.querySelector("#notice")
@@ -14,22 +18,102 @@ const defaultExercises = [
 let routines = []
 let sessions = []
 let profile = null
-let libraryExercises = JSON.parse(localStorage.getItem("myflow-exercises") || "null") || defaultExercises.map(([name, muscle, equipment]) => ({ name, muscle, equipment, favorite: false }))
-let favorites = new Set(JSON.parse(localStorage.getItem("myflow-favorites") || "[]"))
-let plans = JSON.parse(localStorage.getItem("myflow-plans") || "{}")
-let settings = JSON.parse(localStorage.getItem("myflow-preferences") || "{}")
+let libraryExercises = defaultExercises.map(([name, muscle, equipment]) => ({ name, muscle, equipment, favorite: false }))
+let favorites = new Set()
+let plans = {}
+let settings = {}
+let personalNotes = ""
 let page = "inicio", routineTab = "Todos", period = "3 meses", selectedDay = new Date(), monthCursor = new Date()
 let activeSession = null, activeRoutine = null, lastCompleted = null, sets = [], sessionSeconds = 0, restSeconds = 0
 let paused = false, workoutStartedAt = 0, timerHandle = null, restHandle = null, editingExercises = [], routineSaving = false
+let currentUser = null
+const firebaseDataRoot = () => collection(firestore, "users", currentUser.uid, "routines")
+const firebaseUserDocument = (collectionName, id) => doc(firestore, "users", currentUser.uid, collectionName, id)
 
 async function api(path, options = {}) {
-  const response = await fetch(`/api/${path}`, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options })
-  if (!response.ok) {
-    let message = `Error ${response.status}`
-    try { message = (await response.json()).reason || message } catch {}
-    throw new Error(message)
+  if (!currentUser) throw new Error("Inicia sesión para acceder a tus datos.")
+  const method = options.method || "GET"
+  const payload = options.body ? JSON.parse(options.body) : {}
+  const parts = path.split("/").filter(Boolean)
+  const collectionName = parts[0]
+
+  if (path === "profile") {
+    const profileRef = firebaseUserDocument("profile", "main")
+    if (method === "GET") {
+      const snapshot = await getDoc(profileRef)
+      return { profile: snapshot.exists() ? snapshot.data() : null }
+    }
+    if (method === "PUT") {
+      const name = String(payload.name || "").trim()
+      if (!name) throw new Error("Escribe tu nombre para continuar.")
+      const profile = { name, updatedAt: new Date().toISOString() }
+      await setDoc(profileRef, profile, { merge: true })
+      return profile
+    }
   }
-  return response.status === 204 ? null : response.json()
+
+  if (collectionName === "routines") {
+    if (parts.length === 1 && method === "GET") {
+      let snapshots = await getDocs(collection(firestore, "users", currentUser.uid, "routines"))
+      if (snapshots.empty) {
+        const defaults = [
+          ["Push Day", "Pecho · Hombros · Tríceps", "coral"],
+          ["Pull Strength", "Espalda · Bíceps", "violet"],
+          ["Leg Power", "Cuádriceps · Glúteos", "cyan"],
+          ["Upper Hypertrophy", "Torso completo", "green"]
+        ]
+        await Promise.all(defaults.map(([name, description, color]) => addDoc(firebaseDataRoot(), {
+          name, description, color, exercises: [], dayOfWeek: "", updatedAt: new Date().toISOString()
+        })))
+        snapshots = await getDocs(firebaseDataRoot())
+      }
+      return snapshots.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+    }
+    if (parts.length === 1 && method === "POST") {
+      const routine = { ...payload, updatedAt: new Date().toISOString() }
+      const result = await addDoc(firebaseDataRoot(), routine)
+      return { id: result.id, ...routine }
+    }
+    if (parts.length === 2 && method === "PUT") {
+      const routine = { ...payload, updatedAt: new Date().toISOString() }
+      await setDoc(firebaseUserDocument("routines", parts[1]), routine, { merge: true })
+      return { id: parts[1], ...routine }
+    }
+    if (parts.length === 2 && method === "DELETE") {
+      await deleteDoc(firebaseUserDocument("routines", parts[1]))
+      return null
+    }
+  }
+
+  if (collectionName === "sessions") {
+    if (parts.length === 1 && method === "GET") {
+      const snapshots = await getDocs(collection(firestore, "users", currentUser.uid, "sessions"))
+      return snapshots.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+        .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt))
+    }
+    if (parts.length === 1 && method === "POST") {
+      const now = new Date().toISOString()
+      const session = { ...payload, startedAt: now, updatedAt: now, finishedAt: null }
+      const result = await addDoc(collection(firestore, "users", currentUser.uid, "sessions"), session)
+      return { id: result.id, ...session }
+    }
+    if (parts.length === 2 && method === "PUT") {
+      const sessionRef = firebaseUserDocument("sessions", parts[1])
+      const session = { ...payload, updatedAt: new Date().toISOString() }
+      await setDoc(sessionRef, session, { merge: true })
+      const snapshot = await getDoc(sessionRef)
+      return { id: parts[1], ...snapshot.data() }
+    }
+    if (parts.length === 3 && parts[2] === "finish" && method === "POST") {
+      const sessionRef = firebaseUserDocument("sessions", parts[1])
+      const finishedAt = new Date().toISOString()
+      await updateDoc(sessionRef, { finishedAt, updatedAt: finishedAt })
+      const snapshot = await getDoc(sessionRef)
+      return { id: parts[1], ...snapshot.data() }
+    }
+  }
+
+  throw new Error(`Operación no compatible: ${method} ${path}`)
 }
 function showNotice(message) {
   notice.textContent = message; notice.hidden = false; clearTimeout(showNotice.timeout)
@@ -41,10 +125,22 @@ function fmtTime(seconds) { return `${String(Math.floor(seconds / 60)).padStart(
 function fmtWeight(value) { return settings.units === "lb" ? `${(Number(value) * 2.20462).toFixed(1)} lb` : `${Number(value).toLocaleString("es-MX", { maximumFractionDigits: 1 })} kg` }
 function toKg(value) { return settings.units === "lb" ? Number(value) / 2.20462 : Number(value) }
 function saveLocal() {
-  localStorage.setItem("myflow-exercises", JSON.stringify(libraryExercises))
-  localStorage.setItem("myflow-favorites", JSON.stringify([...favorites]))
-  localStorage.setItem("myflow-plans", JSON.stringify(plans))
-  localStorage.setItem("myflow-preferences", JSON.stringify(settings))
+  if(!currentUser)return
+  const key=(name)=>`myflow-${currentUser.uid}-${name}`
+  localStorage.setItem(key("exercises"), JSON.stringify(libraryExercises))
+  localStorage.setItem(key("favorites"), JSON.stringify([...favorites]))
+  localStorage.setItem(key("plans"), JSON.stringify(plans))
+  localStorage.setItem(key("preferences"), JSON.stringify(settings))
+  localStorage.setItem(key("notes"), personalNotes)
+}
+function loadLocal() {
+  const key=(name)=>`myflow-${currentUser.uid}-${name}`
+  try{libraryExercises=JSON.parse(localStorage.getItem(key("exercises"))||"null")||defaultExercises.map(([name,muscle,equipment])=>({name,muscle,equipment,favorite:false}))}catch{libraryExercises=defaultExercises.map(([name,muscle,equipment])=>({name,muscle,equipment,favorite:false}))}
+  try{favorites=new Set(JSON.parse(localStorage.getItem(key("favorites"))||"[]"))}catch{favorites=new Set()}
+  try{plans=JSON.parse(localStorage.getItem(key("plans"))||"{}")}catch{plans={}}
+  try{settings=JSON.parse(localStorage.getItem(key("preferences"))||"{}")}catch{settings={}}
+  personalNotes=localStorage.getItem(key("notes"))||""
+  applyTheme()
 }
 function navTitle(next) {
   const labels = { inicio: "Inicio", rutinas: "Mis rutinas", entrenar: "Entrenamiento", biblioteca: "Biblioteca de ejercicios", progreso: "Progreso y estadísticas", historial: "Historial", calendario: "Calendario", perfil: "Perfil y preferencias", herramientas: "Herramientas", resumen: "Sesión completada" }
@@ -124,10 +220,10 @@ function renderCalendar() {
 function dayKey(date){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`}
 function renderProfile() {
   const displayName=profile?.name||"Atleta"
-  return `<div class="profile-grid"><article class="card profile-card"><div class="profile-large">${esc(initials(displayName))}</div><h2>${esc(displayName)}</h2><p>Intermedio · Hipertrofia</p><div class="profile-metrics"><span><b>76.4</b> kg<small>Peso</small></span><span><b>178</b> cm<small>Altura</small></span><span><b>18</b> meses<small>Experiencia</small></span></div></article><section class="card preferences"><span class="eyebrow">AJUSTES</span><h3>Preferencias de entrenamiento</h3><label>Tu nombre<input id="profile-name-input" maxlength="60" value="${esc(displayName)}"></label><button class="button secondary" data-save-profile>Guardar nombre</button><label>Unidades<select id="units-select"><option value="kg" ${settings.units!=="lb"?"selected":""}>Kilogramos (kg)</option><option value="lb" ${settings.units==="lb"?"selected":""}>Libras (lb)</option></select></label><label>Descanso predeterminado<select id="rest-select">${[30,60,90,120,180].map(x=>`<option value="${x}" ${Number(settings.rest||90)===x?"selected":""}>${x} segundos</option>`).join("")}</select></label><label class="switch-label">Iniciar descanso al completar una serie<input id="auto-rest" type="checkbox" ${settings.autoRest===false?"":"checked"}></label><label>Tema<select id="theme-select"><option value="system" ${(settings.theme||"system")==="system"?"selected":""}>Seguir el sistema</option><option value="light" ${settings.theme==="light"?"selected":""}>Claro</option><option value="dark" ${settings.theme==="dark"?"selected":""}>Oscuro</option></select></label></section><section class="card measurements"><span class="eyebrow">MEDIDAS CORPORALES</span><h3>Último registro</h3><div class="measure-grid"><span>Peso <b>76.4 kg</b></span><span>Cintura <b>81 cm</b></span><span>Brazo <b>37.2 cm</b></span><span>Pecho <b>103 cm</b></span></div></section></div>`
+  return `<div class="profile-grid"><article class="card profile-card"><div class="profile-large">${esc(initials(displayName))}</div><h2>${esc(displayName)}</h2><p>${esc(currentUser?.email||"Cuenta de Google")}</p><div class="profile-metrics"><span><b>${doneSessions().length}</b><small>Entrenamientos</small></span><span><b>${routines.length}</b><small>Rutinas</small></span><span><b>Google</b><small>Cuenta vinculada</small></span></div><button class="button secondary" data-signout>Cerrar sesión</button></article><section class="card preferences"><span class="eyebrow">AJUSTES</span><h3>Preferencias de entrenamiento</h3><label>Tu nombre<input id="profile-name-input" maxlength="60" value="${esc(displayName)}"></label><button class="button secondary" data-save-profile>Guardar nombre</button><label>Unidades<select id="units-select"><option value="kg" ${settings.units!=="lb"?"selected":""}>Kilogramos (kg)</option><option value="lb" ${settings.units==="lb"?"selected":""}>Libras (lb)</option></select></label><label>Descanso predeterminado<select id="rest-select">${[30,60,90,120,180].map(x=>`<option value="${x}" ${Number(settings.rest||90)===x?"selected":""}>${x} segundos</option>`).join("")}</select></label><label class="switch-label">Iniciar descanso al completar una serie<input id="auto-rest" type="checkbox" ${settings.autoRest===false?"":"checked"}></label><label>Tema<select id="theme-select"><option value="system" ${(settings.theme||"system")==="system"?"selected":""}>Seguir el sistema</option><option value="light" ${settings.theme==="light"?"selected":""}>Claro</option><option value="dark" ${settings.theme==="dark"?"selected":""}>Oscuro</option></select></label></section><section class="card measurements"><span class="eyebrow">MEDIDAS CORPORALES</span><h3>Último registro</h3><div class="measure-grid"><span>Peso <b>76.4 kg</b></span><span>Cintura <b>81 cm</b></span><span>Brazo <b>37.2 cm</b></span><span>Pecho <b>103 cm</b></span></div></section></div>`
 }
 function renderTools() {
-  return `<div class="tools-grid"><article class="card tool-card"><span class="eyebrow">CALCULADORA</span><h3>Discos para barra</h3><p>Calcula cuánto cargar en cada lado. Barra estándar: 20 kg.</p><label>Peso total (${settings.units||"kg"})<input id="bar-weight" type="number" min="20" value="100"></label><div class="plate-result" id="plate-result">40 kg por lado</div></article><article class="card tool-card"><span class="eyebrow">CALCULADORA</span><h3>Repetición máxima (1RM)</h3><p>Estimación con la fórmula de Epley.</p><div class="tool-input-row"><label>Peso<input id="rm-weight" type="number" value="90" min="1"></label><label>Reps<input id="rm-reps" type="number" value="8" min="1" max="30"></label></div><div class="plate-result" id="rm-result">114 kg estimados</div></article><article class="card tool-card"><span class="eyebrow">DATOS</span><h3>Respaldo y notas</h3><p>Exporta una copia de tus rutinas y entrenamientos.</p><button class="button secondary full-button" data-export-json>Exportar datos JSON</button><button class="button secondary full-button" data-export-csv>Exportar historial CSV</button><label>Notas personales<textarea id="personal-notes" rows="4" placeholder="Anota tus objetivos o recordatorios…">${esc(localStorage.getItem("myflow-notes")||"")}</textarea></label></article></div>`
+  return `<div class="tools-grid"><article class="card tool-card"><span class="eyebrow">CALCULADORA</span><h3>Discos para barra</h3><p>Calcula cuánto cargar en cada lado. Barra estándar: 20 kg.</p><label>Peso total (${settings.units||"kg"})<input id="bar-weight" type="number" min="20" value="100"></label><div class="plate-result" id="plate-result">40 kg por lado</div></article><article class="card tool-card"><span class="eyebrow">CALCULADORA</span><h3>Repetición máxima (1RM)</h3><p>Estimación con la fórmula de Epley.</p><div class="tool-input-row"><label>Peso<input id="rm-weight" type="number" value="90" min="1"></label><label>Reps<input id="rm-reps" type="number" value="8" min="1" max="30"></label></div><div class="plate-result" id="rm-result">114 kg estimados</div></article><article class="card tool-card"><span class="eyebrow">DATOS</span><h3>Respaldo y notas</h3><p>Exporta una copia de tus rutinas y entrenamientos.</p><button class="button secondary full-button" data-export-json>Exportar datos JSON</button><button class="button secondary full-button" data-export-csv>Exportar historial CSV</button><label>Notas personales<textarea id="personal-notes" rows="4" placeholder="Anota tus objetivos o recordatorios…">${esc(personalNotes)}</textarea></label></article></div>`
 }
 function renderSummary(session=lastCompleted) {
   if(!session) return `<div class="empty">No hay una sesión completada para mostrar.</div>`
@@ -261,14 +357,15 @@ function dayKey(date){return `${date.getFullYear()}-${String(date.getMonth()+1).
 async function refreshData() { [routines,sessions]=await Promise.all([api("routines"),api("sessions")]); }
 async function load() {
   try {
+    loadLocal()
     await refreshData()
     const profileResponse=await api("profile")
     profile=profileResponse.profile
     const unfinished=sessions.find((session)=>!session.finishedAt)
     if(unfinished){activeSession=unfinished;activeRoutine=routines.find((r)=>r.name===unfinished.routineName)||{name:unfinished.routineName};sets=unfinished.sets?.length?unfinished.sets:[newSet(defaultExercises[0][0])];workoutStartedAt=new Date(unfinished.startedAt).getTime();sessionSeconds=unfinished.durationSeconds??Math.floor((Date.now()-workoutStartedAt)/1000);page="entrenar";title.textContent="Entrenamiento";startClock()}
     render()
-    if(!profile?.name)document.querySelector("#welcome-dialog").showModal()
-  } catch(error) { showNotice(`No se pudo conectar con Vapor: ${error.message}`);view.innerHTML=`<div class="empty">No se pudo cargar MyFlow. Comprueba que el servidor Swift esté en ejecución.</div>` }
+    if(!profile?.name){document.querySelector('#welcome-form').elements.name.value=currentUser?.displayName||"";document.querySelector("#welcome-dialog").showModal()}
+  } catch(error) { showNotice(`No se pudieron cargar tus datos: ${error.message}`);view.innerHTML=`<div class="empty">No se pudo cargar tu cuenta. Comprueba que las reglas de Firestore estén publicadas y vuelve a intentarlo.</div>` }
 }
 
 // Navigation and actions
@@ -276,6 +373,7 @@ view.addEventListener("click",async(event)=>{
   const button=event.target.closest("button");if(!button)return
   try {
     if(button.dataset.page){navTitle(button.dataset.page);return}
+    if(button.hasAttribute("data-signout")){await signOut(auth);return}
     if(button.hasAttribute("data-create-routine")){openRoutineEditor();return}
     if(button.dataset.routineTab){routineTab=button.dataset.routineTab;render();return}
     if(button.hasAttribute("data-save-profile")){
@@ -320,7 +418,7 @@ view.addEventListener("change",async(event)=>{
   if(target.dataset.reps!==undefined){sets[Number(target.dataset.reps)].reps=Math.max(1,Number(target.value)||1);if(activeSession)await saveSession()}
   if(target.hasAttribute("data-current-weight")){const index=sets.findIndex((x)=>!x.completed);if(index>=0)sets[index].weight=toKg(Number(target.value)||0)}
   if(target.hasAttribute("data-current-reps")){const index=sets.findIndex((x)=>!x.completed);if(index>=0)sets[index].reps=Math.max(1,Number(target.value)||1)}
-  if(target.id==="personal-notes")localStorage.setItem("myflow-notes",target.value)
+  if(target.id==="personal-notes"){personalNotes=target.value;saveLocal()}
   if(target.id==="units-select"){settings.units=target.value;saveLocal();render();return}
   if(target.id==="rest-select"){settings.rest=Number(target.value);saveLocal();showNotice("Descanso predeterminado actualizado.");return}
   if(target.id==="auto-rest"){settings.autoRest=target.checked;saveLocal();return}
@@ -374,4 +472,50 @@ document.querySelector("#theme-button").addEventListener("click",()=>{settings.t
 window.matchMedia?.("(prefers-color-scheme: light)").addEventListener("change",()=>{if(!settings.theme||settings.theme==="system")applyTheme()})
 const moreButton=document.querySelector("#more-button")
 moreButton.addEventListener("click",()=>{const menu=document.querySelector("#more-menu");menu.hidden=!menu.hidden;moreButton.setAttribute("aria-expanded",String(!menu.hidden))})
-load()
+
+const authGate=document.querySelector("#auth-gate")
+const authMessage=document.querySelector("#auth-message")
+const authError=document.querySelector("#auth-error")
+const googleSignIn=document.querySelector("#google-sign-in")
+const appShell=document.querySelector(".shell")
+const mobileNavigation=document.querySelector("#mobile-navigation")
+let loadedUid=null
+
+googleSignIn.addEventListener("click",async()=>{
+  googleSignIn.disabled=true
+  authError.hidden=true
+  authMessage.textContent="Conectando con Google…"
+  try {
+    await signInWithPopup(auth,googleProvider)
+  } catch(error) {
+    if(error.code==="auth/popup-blocked") {
+      try { await signInWithRedirect(auth,googleProvider);return }
+      catch(redirectError) { error=redirectError }
+    }
+    authError.textContent=error.code==="auth/unauthorized-domain"
+      ? "Este dominio no está autorizado en Firebase Authentication."
+      : `No se pudo iniciar sesión: ${error.message}`
+    authError.hidden=false
+    authMessage.textContent="Prueba de nuevo o revisa la configuración del proveedor Google en Firebase."
+    googleSignIn.disabled=false
+  }
+})
+
+onAuthStateChanged(auth,async(user)=>{
+  currentUser=user
+  authError.hidden=true
+  if(!user) {
+    loadedUid=null
+    clearInterval(timerHandle);clearInterval(restHandle)
+    profile=null;routines=[];sessions=[];activeSession=null;activeRoutine=null;sets=[];libraryExercises=defaultExercises.map(([name,muscle,equipment])=>({name,muscle,equipment,favorite:false}));favorites=new Set();plans={};settings={};personalNotes=""
+    appShell.hidden=true;mobileNavigation.hidden=true;authGate.hidden=false
+    authMessage.textContent="Inicia sesión con Google para guardar tus rutinas y sesiones en tu cuenta."
+    googleSignIn.hidden=false;googleSignIn.disabled=false
+    return
+  }
+  authGate.hidden=true;appShell.hidden=false;mobileNavigation.hidden=false
+  authMessage.textContent="Cargando tu cuenta…"
+  if(loadedUid===user.uid)return
+  loadedUid=user.uid
+  await load()
+})

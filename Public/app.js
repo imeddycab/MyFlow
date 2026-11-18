@@ -1,6 +1,21 @@
-import { auth, firestore, googleProvider } from "./firebase.js"
-import { onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-auth.js"
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-firestore.js"
+let auth, firestore, googleProvider
+let onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut
+let addDoc, collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc
+let firebaseLoadError = null
+try {
+  const [firebase, authSDK, firestoreSDK] = await Promise.all([
+    import("./firebase.js?v=20261118-auth1"),
+    import("https://www.gstatic.com/firebasejs/13.3.0/firebase-auth.js"),
+    import("https://www.gstatic.com/firebasejs/13.3.0/firebase-firestore.js")
+  ])
+  auth = firebase.auth
+  firestore = firebase.firestore
+  googleProvider = firebase.googleProvider
+  ;({ onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } = authSDK)
+  ;({ addDoc, collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc } = firestoreSDK)
+} catch (error) {
+  firebaseLoadError = error
+}
 
 const view = document.querySelector("#view")
 const title = document.querySelector("#page-title")
@@ -353,7 +368,6 @@ function updateCalculators() {
   const rmWeight=Number(document.querySelector("#rm-weight")?.value)||0, rmReps=Number(document.querySelector("#rm-reps")?.value)||1
   const rm=document.querySelector("#rm-result");if(rm)rm.textContent=`${fmtWeight(rmWeight*(1+Math.min(rmReps,30)/30))} estimados`
 }
-function dayKey(date){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`}
 async function refreshData() { [routines,sessions]=await Promise.all([api("routines"),api("sessions")]); }
 async function load() {
   try {
@@ -501,21 +515,29 @@ googleSignIn.addEventListener("click",async()=>{
   }
 })
 
-onAuthStateChanged(auth,async(user)=>{
-  currentUser=user
-  authError.hidden=true
-  if(!user) {
-    loadedUid=null
-    clearInterval(timerHandle);clearInterval(restHandle)
-    profile=null;routines=[];sessions=[];activeSession=null;activeRoutine=null;sets=[];libraryExercises=defaultExercises.map(([name,muscle,equipment])=>({name,muscle,equipment,favorite:false}));favorites=new Set();plans={};settings={};personalNotes=""
-    appShell.hidden=true;mobileNavigation.hidden=true;authGate.hidden=false
-    authMessage.textContent="Inicia sesión con Google para guardar tus rutinas y sesiones en tu cuenta."
-    googleSignIn.hidden=false;googleSignIn.disabled=false
-    return
-  }
-  authGate.hidden=true;appShell.hidden=false;mobileNavigation.hidden=false
-  authMessage.textContent="Cargando tu cuenta…"
-  if(loadedUid===user.uid)return
-  loadedUid=user.uid
-  await load()
-})
+if(firebaseLoadError) {
+  appShell.hidden=true;mobileNavigation.hidden=true;authGate.hidden=false
+  authMessage.textContent="MyFlow no pudo iniciar sus servicios de acceso."
+  authError.textContent="No se pudo cargar Firebase. Recarga la página; si continúa, revisa la conexión o los permisos del navegador."
+  authError.hidden=false
+  googleSignIn.hidden=true
+} else {
+  onAuthStateChanged(auth,async(user)=>{
+    currentUser=user
+    authError.hidden=true
+    if(!user) {
+      loadedUid=null
+      clearInterval(timerHandle);clearInterval(restHandle)
+      profile=null;routines=[];sessions=[];activeSession=null;activeRoutine=null;sets=[];libraryExercises=defaultExercises.map(([name,muscle,equipment])=>({name,muscle,equipment,favorite:false}));favorites=new Set();plans={};settings={};personalNotes=""
+      appShell.hidden=true;mobileNavigation.hidden=true;authGate.hidden=false
+      authMessage.textContent="Inicia sesión con Google para guardar tus rutinas y sesiones en tu cuenta."
+      googleSignIn.hidden=false;googleSignIn.disabled=false
+      return
+    }
+    authGate.hidden=true;appShell.hidden=false;mobileNavigation.hidden=false
+    authMessage.textContent="Cargando tu cuenta…"
+    if(loadedUid===user.uid)return
+    loadedUid=user.uid
+    await load()
+  })
+}

@@ -1,5 +1,5 @@
-const CACHE = "myflow-shell-v9"
-const SHELL = ["/", "/app.css?v=20261118-auth1", "/app.js?v=20261118-auth1", "/firebase.js?v=20261118-auth1", "/share-result.js", "/manifest.webmanifest", "/assets/favicon.png", "/favicon.ico", "/assets/favicon-16.png", "/assets/favicon-32.png", "/assets/apple-touch-icon.png", "/assets/icon.svg", "/assets/safari-pinned-tab.svg", "/assets/icon-192.png", "/assets/icon-512.png", "/assets/icon-maskable-512.png"]
+const CACHE = "myflow-shell-v10"
+const SHELL = ["/", "/app.css?v=20261118-welcome1", "/app.js?v=20261118-welcome2", "/firebase.js?v=20261118-auth1", "/share-result.js", "/manifest.webmanifest", "/assets/favicon.png", "/favicon.ico", "/assets/favicon-16.png", "/assets/favicon-32.png", "/assets/apple-touch-icon.png", "/assets/icon.svg", "/assets/safari-pinned-tab.svg", "/assets/icon-192.png", "/assets/icon-512.png", "/assets/icon-maskable-512.png"]
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)))
   self.skipWaiting()

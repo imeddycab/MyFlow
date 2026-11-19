@@ -61,7 +61,13 @@ async function api(path, options = {}) {
     if (method === "PUT") {
       const name = String(payload.name || "").trim()
       if (!name) throw new Error("Escribe tu nombre para continuar.")
-      const profile = { name, updatedAt: new Date().toISOString() }
+      const existing = await getDoc(profileRef)
+      const profile = {
+        ...(existing.exists() ? existing.data() : {}),
+        name,
+        hasCompletedIntro: payload.hasCompletedIntro ?? (existing.exists() ? existing.data().hasCompletedIntro === true : false),
+        updatedAt: new Date().toISOString()
+      }
       await setDoc(profileRef, profile, { merge: true })
       return profile
     }
@@ -69,17 +75,20 @@ async function api(path, options = {}) {
 
   if (collectionName === "routines") {
     if (parts.length === 1 && method === "GET") {
-      let snapshots = await getDocs(collection(firestore, "users", currentUser.uid, "routines"))
-      if (snapshots.empty) {
-        const defaults = [
-          ["Push Day", "Pecho · Hombros · Tríceps", "coral"],
-          ["Pull Strength", "Espalda · Bíceps", "violet"],
-          ["Leg Power", "Cuádriceps · Glúteos", "cyan"],
-          ["Upper Hypertrophy", "Torso completo", "green"]
-        ]
-        await Promise.all(defaults.map(([name, description, color]) => addDoc(firebaseDataRoot(), {
-          name, description, color, exercises: [], dayOfWeek: "", updatedAt: new Date().toISOString()
-        })))
+      let snapshots = await getDocs(firebaseDataRoot())
+      // Remove only the four untouched sample routines created by older app versions.
+      const sampleDescriptions = new Map([
+        ["Push Day", "Pecho · Hombros · Tríceps"],
+        ["Pull Strength", "Espalda · Bíceps"],
+        ["Leg Power", "Cuádriceps · Glúteos"],
+        ["Upper Hypertrophy", "Torso completo"]
+      ])
+      const samples = snapshots.docs.filter((snapshot) => {
+        const item = snapshot.data()
+        return sampleDescriptions.get(item.name) === item.description && !item.dayOfWeek && (!item.exercises || item.exercises.length === 0)
+      })
+      if (samples.length) {
+        await Promise.all(samples.map((snapshot) => deleteDoc(snapshot.ref)))
         snapshots = await getDocs(firebaseDataRoot())
       }
       return snapshots.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
@@ -166,7 +175,7 @@ function navTitle(next) {
   render(); window.scrollTo({ top: 0, behavior: "smooth" })
 }
 function exerciseData(routine) {
-  return routine?.exercises?.length ? routine.exercises : defaultExercises.slice(0, 4).map(([name, muscle, equipment]) => ({ name, muscle, equipment, sets: 3, reps: "8–12", restSeconds: 90 }))
+  return routine?.exercises || []
 }
 function routineCard(routine, index) {
   const ex = exerciseData(routine)
@@ -177,7 +186,7 @@ function doneSessions() { return sessions.filter((session) => session.finishedAt
 function renderHome() {
   const routine = routines[0], completed = doneSessions(), volume = completed.reduce((sum, session) => sum + volumeOf(session), 0)
   const recent = [...sessions].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)).slice(0, 3)
-  return `<section class="hero"><div class="hero-copy"><span class="eyebrow">ENTRENAMIENTO DE HOY</span><h2>${esc(routine?.name || "Tu primera rutina")}</h2><p>${esc(routine?.description || "Crea una rutina y empieza a entrenar.")}</p><div class="chips"><span class="chip">${exerciseData(routine).length} ejercicios</span><span class="chip">${exerciseData(routine).reduce((a,x)=>a+Number(x.sets||3),0)} series</span><span class="chip">~${exerciseData(routine).length*12} min</span></div><button class="button" data-start="${routine?.id || ""}">▶ &nbsp;Comenzar entrenamiento</button></div></section><div class="section-head"><div><span class="eyebrow">RESUMEN</span><h2>Tu semana en movimiento</h2></div><button class="text-button" data-page="progreso">Ver estadísticas →</button></div><div class="stats"><article class="stat"><small>Entrenamientos</small><strong>${completed.length}</strong><span>${sessions.length ? `${sessions.length} sesiones registradas` : "Empieza tu primera sesión"}</span></article><article class="stat"><small>Tiempo total</small><strong>${Math.round(completed.reduce((a,s)=>a+(new Date(s.finishedAt)-new Date(s.startedAt))/60000,0))} min</strong><span>Sesiones completadas</span></article><article class="stat"><small>Volumen acumulado</small><strong>${Math.round(volume).toLocaleString("es-MX")} kg</strong><span>Series registradas</span></article></div><div class="section-head"><div><span class="eyebrow">TUS PLANES</span><h2>Mis rutinas</h2></div><button class="text-button" data-page="rutinas">Ver todas →</button></div><div class="routine-grid">${routines.slice(0,3).map(routineCard).join("") || `<div class="empty">Todavía no tienes rutinas. Crea una para empezar.</div>`}</div><div class="section-head"><div><span class="eyebrow">ACTIVIDAD</span><h2>Últimos entrenamientos</h2></div><button class="text-button" data-page="historial">Ver historial</button></div><div class="history-list">${recent.map(sessionRow).join("") || `<div class="empty">Tus sesiones aparecerán aquí.</div>`}</div>`
+  return `<section class="hero"><div class="hero-copy"><span class="eyebrow">ENTRENAMIENTO DE HOY</span><h2>${esc(routine?.name || "Tu primera rutina")}</h2><p>${esc(routine?.description || "Crea tu propia rutina para empezar.")}</p><div class="chips"><span class="chip">${routine?`${exerciseData(routine).length} ejercicios`:"Sin rutinas"}</span>${routine?`<span class="chip">${exerciseData(routine).reduce((a,x)=>a+Number(x.sets||3),0)} series</span><span class="chip">~${exerciseData(routine).length*12} min</span>`:""}</div>${routine?`<button class="button" data-start="${routine.id}">▶ &nbsp;Comenzar entrenamiento</button>`:`<button class="button" data-page="rutinas">＋ &nbsp;Crear mi primera rutina</button>`}</div></section><div class="section-head"><div><span class="eyebrow">RESUMEN</span><h2>Tu semana en movimiento</h2></div><button class="text-button" data-page="progreso">Ver estadísticas →</button></div><div class="stats"><article class="stat"><small>Entrenamientos</small><strong>${completed.length}</strong><span>${sessions.length ? `${sessions.length} sesiones registradas` : "Empieza tu primera sesión"}</span></article><article class="stat"><small>Tiempo total</small><strong>${Math.round(completed.reduce((a,s)=>a+(new Date(s.finishedAt)-new Date(s.startedAt))/60000,0))} min</strong><span>Sesiones completadas</span></article><article class="stat"><small>Volumen acumulado</small><strong>${Math.round(volume).toLocaleString("es-MX")} kg</strong><span>Series registradas</span></article></div><div class="section-head"><div><span class="eyebrow">TUS PLANES</span><h2>Mis rutinas</h2></div><button class="text-button" data-page="rutinas">Ver todas →</button></div><div class="routine-grid">${routines.slice(0,3).map(routineCard).join("") || `<div class="empty">Todavía no tienes rutinas. Crea una para empezar.</div>`}</div><div class="section-head"><div><span class="eyebrow">ACTIVIDAD</span><h2>Últimos entrenamientos</h2></div><button class="text-button" data-page="historial">Ver historial</button></div><div class="history-list">${recent.map(sessionRow).join("") || `<div class="empty">Tus sesiones aparecerán aquí.</div>`}</div>`
 }
 function renderRoutines() {
   const visible = routines.filter((r) => routineTab === "Todos" || (routineTab === "Push Pull Legs" ? /push|pull|leg/i.test(r.name) : routineTab === "Upper / Lower" ? /upper|lower|leg/i.test(r.name) : r.exercises?.length > 0))
@@ -235,7 +244,8 @@ function renderCalendar() {
 function dayKey(date){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`}
 function renderProfile() {
   const displayName=profile?.name||"Atleta"
-  return `<div class="profile-grid"><article class="card profile-card"><div class="profile-large">${esc(initials(displayName))}</div><h2>${esc(displayName)}</h2><p>${esc(currentUser?.email||"Cuenta de Google")}</p><div class="profile-metrics"><span><b>${doneSessions().length}</b><small>Entrenamientos</small></span><span><b>${routines.length}</b><small>Rutinas</small></span><span><b>Google</b><small>Cuenta vinculada</small></span></div><button class="button secondary" data-signout>Cerrar sesión</button></article><section class="card preferences"><span class="eyebrow">AJUSTES</span><h3>Preferencias de entrenamiento</h3><label>Tu nombre<input id="profile-name-input" maxlength="60" value="${esc(displayName)}"></label><button class="button secondary" data-save-profile>Guardar nombre</button><label>Unidades<select id="units-select"><option value="kg" ${settings.units!=="lb"?"selected":""}>Kilogramos (kg)</option><option value="lb" ${settings.units==="lb"?"selected":""}>Libras (lb)</option></select></label><label>Descanso predeterminado<select id="rest-select">${[30,60,90,120,180].map(x=>`<option value="${x}" ${Number(settings.rest||90)===x?"selected":""}>${x} segundos</option>`).join("")}</select></label><label class="switch-label">Iniciar descanso al completar una serie<input id="auto-rest" type="checkbox" ${settings.autoRest===false?"":"checked"}></label><label>Tema<select id="theme-select"><option value="system" ${(settings.theme||"system")==="system"?"selected":""}>Seguir el sistema</option><option value="light" ${settings.theme==="light"?"selected":""}>Claro</option><option value="dark" ${settings.theme==="dark"?"selected":""}>Oscuro</option></select></label></section><section class="card measurements"><span class="eyebrow">MEDIDAS CORPORALES</span><h3>Último registro</h3><div class="measure-grid"><span>Peso <b>76.4 kg</b></span><span>Cintura <b>81 cm</b></span><span>Brazo <b>37.2 cm</b></span><span>Pecho <b>103 cm</b></span></div></section></div>`
+  const avatar=currentUser?.photoURL?`<img class="profile-photo" src="${esc(currentUser.photoURL)}" alt="Foto de ${esc(displayName)}">`:esc(initials(displayName))
+  return `<div class="profile-grid"><article class="card profile-card"><div class="profile-large">${avatar}</div><h2>${esc(displayName)}</h2><p>${esc(currentUser?.email||"Cuenta de Google")}</p><div class="profile-metrics"><span><b>${doneSessions().length}</b><small>Entrenamientos</small></span><span><b>${routines.length}</b><small>Rutinas</small></span><span><b>Google</b><small>Cuenta vinculada</small></span></div><button class="button secondary" data-signout>Cerrar sesión</button></article><section class="card preferences"><span class="eyebrow">AJUSTES</span><h3>Preferencias de entrenamiento</h3><label>Tu nombre<input id="profile-name-input" maxlength="60" value="${esc(displayName)}"></label><button class="button secondary" data-save-profile>Guardar nombre</button><label>Unidades<select id="units-select"><option value="kg" ${settings.units!=="lb"?"selected":""}>Kilogramos (kg)</option><option value="lb" ${settings.units==="lb"?"selected":""}>Libras (lb)</option></select></label><label>Descanso predeterminado<select id="rest-select">${[30,60,90,120,180].map(x=>`<option value="${x}" ${Number(settings.rest||90)===x?"selected":""}>${x} segundos</option>`).join("")}</select></label><label class="switch-label">Iniciar descanso al completar una serie<input id="auto-rest" type="checkbox" ${settings.autoRest===false?"":"checked"}></label><label>Tema<select id="theme-select"><option value="system" ${(settings.theme||"system")==="system"?"selected":""}>Seguir el sistema</option><option value="light" ${settings.theme==="light"?"selected":""}>Claro</option><option value="dark" ${settings.theme==="dark"?"selected":""}>Oscuro</option></select></label></section><section class="card measurements"><span class="eyebrow">MEDIDAS CORPORALES</span><h3>Último registro</h3><div class="measure-grid"><span>Peso <b>—</b></span><span>Cintura <b>—</b></span><span>Brazo <b>—</b></span><span>Pecho <b>—</b></span></div></section></div>`
 }
 function renderTools() {
   return `<div class="tools-grid"><article class="card tool-card"><span class="eyebrow">CALCULADORA</span><h3>Discos para barra</h3><p>Calcula cuánto cargar en cada lado. Barra estándar: 20 kg.</p><label>Peso total (${settings.units||"kg"})<input id="bar-weight" type="number" min="20" value="100"></label><div class="plate-result" id="plate-result">40 kg por lado</div></article><article class="card tool-card"><span class="eyebrow">CALCULADORA</span><h3>Repetición máxima (1RM)</h3><p>Estimación con la fórmula de Epley.</p><div class="tool-input-row"><label>Peso<input id="rm-weight" type="number" value="90" min="1"></label><label>Reps<input id="rm-reps" type="number" value="8" min="1" max="30"></label></div><div class="plate-result" id="rm-result">114 kg estimados</div></article><article class="card tool-card"><span class="eyebrow">DATOS</span><h3>Respaldo y notas</h3><p>Exporta una copia de tus rutinas y entrenamientos.</p><button class="button secondary full-button" data-export-json>Exportar datos JSON</button><button class="button secondary full-button" data-export-csv>Exportar historial CSV</button><label>Notas personales<textarea id="personal-notes" rows="4" placeholder="Anota tus objetivos o recordatorios…">${esc(personalNotes)}</textarea></label></article></div>`
@@ -269,15 +279,18 @@ function updateIdentity() {
   const name=profile?.name||"Mi perfil"
   const nameNode=document.querySelector("#profile-name-text"), initialsNode=document.querySelector("#profile-initials")
   if(nameNode)nameNode.textContent=name
-  if(initialsNode)initialsNode.textContent=initials(profile?.name)
+  if(initialsNode) {
+    if(currentUser?.photoURL) initialsNode.innerHTML=`<img class="avatar-photo" src="${esc(currentUser.photoURL)}" alt="">`
+    else initialsNode.textContent=initials(profile?.name)
+  }
 }
-function newSet(exercise,weight=40,reps=10) { return {exercise,weight,reps,completed:false} }
+function newSet(exercise="Ejercicio libre",weight=40,reps=10) { return {exercise,weight,reps,completed:false} }
 async function startWorkout(routine) {
   if(activeSession&&!activeSession.finishedAt){navTitle("entrenar");showNotice("Ya tienes una sesión en curso. Continúa esa sesión antes de iniciar otra.");return}
   activeRoutine=routine||{name:"Entrenamiento libre",exercises:[]}
   const config=exerciseData(activeRoutine)
   sets=config.flatMap((exercise)=>Array.from({length:Number(exercise.sets||3)},()=>newSet(exercise.name,60,Number.parseInt(exercise.reps,10)||8)))
-  if(!sets.length) sets=[newSet(defaultExercises[0][0])]
+  if(!sets.length) sets=[newSet()]
   sessionSeconds=0;restSeconds=0;paused=false
   activeSession=await api("sessions",{method:"POST",body:JSON.stringify({routineName:activeRoutine.name,sets,durationSeconds:0})})
   sessions=[activeSession,...sessions.filter((session)=>session.id!==activeSession.id)]
@@ -376,9 +389,11 @@ async function load() {
     const profileResponse=await api("profile")
     profile=profileResponse.profile
     const unfinished=sessions.find((session)=>!session.finishedAt)
-    if(unfinished){activeSession=unfinished;activeRoutine=routines.find((r)=>r.name===unfinished.routineName)||{name:unfinished.routineName};sets=unfinished.sets?.length?unfinished.sets:[newSet(defaultExercises[0][0])];workoutStartedAt=new Date(unfinished.startedAt).getTime();sessionSeconds=unfinished.durationSeconds??Math.floor((Date.now()-workoutStartedAt)/1000);page="entrenar";title.textContent="Entrenamiento";startClock()}
+    if(unfinished){activeSession=unfinished;activeRoutine=routines.find((r)=>r.name===unfinished.routineName)||{name:unfinished.routineName};sets=unfinished.sets?.length?unfinished.sets:[newSet()];workoutStartedAt=new Date(unfinished.startedAt).getTime();sessionSeconds=unfinished.durationSeconds??Math.floor((Date.now()-workoutStartedAt)/1000);page="entrenar";title.textContent="Entrenamiento";startClock()}
     render()
-    if(!profile?.name){document.querySelector('#welcome-form').elements.name.value=currentUser?.displayName||"";document.querySelector("#welcome-dialog").showModal()}
+    const googleName=currentUser?.displayName||currentUser?.providerData?.find((provider)=>provider.providerId==="google.com")?.displayName||""
+    if(!profile?.name){document.querySelector('#welcome-form').elements.name.value=googleName;document.querySelector("#welcome-dialog").showModal()}
+    else if(profile.hasCompletedIntro!==true){document.querySelector("#intro-name").textContent=profile.name;document.querySelector("#intro-dialog").showModal()}
   } catch(error) { showNotice(`No se pudieron cargar tus datos: ${error.message}`);view.innerHTML=`<div class="empty">No se pudo cargar tu cuenta. Comprueba que las reglas de Firestore estén publicadas y vuelve a intentarlo.</div>` }
 }
 
@@ -411,7 +426,7 @@ view.addEventListener("click",async(event)=>{
     if(button.dataset.openRest!==undefined){startRestModal();return}
     if(button.dataset.restAdd){restSeconds=Math.min(900,restSeconds+Number(button.dataset.restAdd));render();return}
     if(button.dataset.restSkip!==undefined){restSeconds=0;clearInterval(restHandle);render();return}
-    if(button.dataset.addSet!==undefined){const name=sets.find((x)=>!x.completed)?.exercise||sets.at(-1)?.exercise||defaultExercises[0][0];sets.push(newSet(name,sets.at(-1)?.weight||40,sets.at(-1)?.reps||8));render();return}
+    if(button.dataset.addSet!==undefined){const name=sets.find((x)=>!x.completed)?.exercise||sets.at(-1)?.exercise||"Ejercicio libre";sets.push(newSet(name,sets.at(-1)?.weight||40,sets.at(-1)?.reps||8));render();return}
     if(button.dataset.addExercise!==undefined){const options=libraryExercises.map((x,i)=>`${i+1}. ${x.name}`).join("\n");const selection=Number(prompt(`Elige un ejercicio:\n${options}`,"1"))-1;if(libraryExercises[selection]){sets.push(...Array.from({length:3},()=>newSet(libraryExercises[selection].name)));render()}return}
     if(button.dataset.completeCurrent!==undefined){const index=Number(button.dataset.completeCurrent);const row=document.querySelector("[data-current-weight]");const reps=document.querySelector("[data-current-reps]");sets[index].weight=toKg(Number(row.value)||0);sets[index].reps=Math.max(1,Number(reps.value)||1);sets[index].completed=true;if(activeSession)await saveSession();const config=exerciseData(activeRoutine);const exercise=config.find((x)=>x.name===sets[index].exercise);workoutRest(Number(exercise?.restSeconds||settings.rest||90));return}
     if(button.dataset.finish!==undefined){await finishWorkout();return}
@@ -465,9 +480,15 @@ document.querySelector("#welcome-form").addEventListener("submit",async(event)=>
   const name=event.currentTarget.elements.name.value.trim()
   if(!name)return
   const submit=event.currentTarget.querySelector("[type=submit]");submit.disabled=true
-  try{profile=await api("profile",{method:"PUT",body:JSON.stringify({name})});document.querySelector("#welcome-dialog").close();render();showNotice(`¡Bienvenido a MyFlow, ${profile.name}!`)}
+  try{profile=await api("profile",{method:"PUT",body:JSON.stringify({name})});document.querySelector("#welcome-dialog").close();document.querySelector("#intro-name").textContent=profile.name;document.querySelector("#intro-dialog").showModal()}
   catch(error){showNotice(error.message)}
   finally{submit.disabled=false}
+})
+document.querySelector("#accept-intro").addEventListener("click",async()=>{
+  const button=document.querySelector("#accept-intro");button.disabled=true
+  try{profile=await api("profile",{method:"PUT",body:JSON.stringify({name:profile?.name||currentUser?.displayName||"Atleta",hasCompletedIntro:true})});document.querySelector("#intro-dialog").close();page="inicio";title.textContent="Inicio";render();showNotice(`¡Bienvenido a MyFlow, ${profile.name}!`)}
+  catch(error){showNotice(`No se pudo guardar la bienvenida: ${error.message}`)}
+  finally{button.disabled=false}
 })
 document.querySelector("#rest-form").addEventListener("submit",(event)=>{event.preventDefault();const seconds=Math.max(5,Math.min(900,Number(event.currentTarget.elements.seconds.value)||90));settings.rest=seconds;saveLocal();document.querySelector("#rest-dialog").close();workoutRest(seconds)})
 document.querySelector("#rest-form").addEventListener("click",(event)=>{const preset=event.target.closest("[data-timer-preset]");if(preset)event.currentTarget.elements.seconds.value=preset.dataset.timerPreset})

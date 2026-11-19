@@ -393,7 +393,7 @@ async function load() {
     render()
     const googleName=currentUser?.displayName||currentUser?.providerData?.find((provider)=>provider.providerId==="google.com")?.displayName||""
     if(!profile?.name){document.querySelector('#welcome-form').elements.name.value=googleName;document.querySelector("#welcome-dialog").showModal()}
-    else if(profile.hasCompletedIntro!==true){document.querySelector("#intro-name").textContent=profile.name;document.querySelector("#intro-dialog").showModal()}
+    else if(profile.hasCompletedIntro!==true&&localStorage.getItem(`myflow-${currentUser.uid}-intro-completed`)!=="true"){document.querySelector("#intro-name").textContent=profile.name;document.querySelector("#intro-dialog").showModal()}
   } catch(error) { showNotice(`No se pudieron cargar tus datos: ${error.message}`);view.innerHTML=`<div class="empty">No se pudo cargar tu cuenta. Comprueba que las reglas de Firestore estén publicadas y vuelve a intentarlo.</div>` }
 }
 
@@ -486,8 +486,12 @@ document.querySelector("#welcome-form").addEventListener("submit",async(event)=>
 })
 document.querySelector("#accept-intro").addEventListener("click",async()=>{
   const button=document.querySelector("#accept-intro");button.disabled=true
-  try{profile=await api("profile",{method:"PUT",body:JSON.stringify({name:profile?.name||currentUser?.displayName||"Atleta",hasCompletedIntro:true})});document.querySelector("#intro-dialog").close();page="inicio";title.textContent="Inicio";render();showNotice(`¡Bienvenido a MyFlow, ${profile.name}!`)}
-  catch(error){showNotice(`No se pudo guardar la bienvenida: ${error.message}`)}
+  const name=profile?.name||currentUser?.displayName||"Atleta"
+  profile={...profile,name,hasCompletedIntro:true}
+  try{localStorage.setItem(`myflow-${currentUser.uid}-intro-completed`,"true")}catch{}
+  document.querySelector("#intro-dialog").close();page="inicio";title.textContent="Inicio";render()
+  try{profile=await api("profile",{method:"PUT",body:JSON.stringify({name,hasCompletedIntro:true})});render();showNotice(`¡Bienvenido a MyFlow, ${profile.name}!`)}
+  catch(error){showNotice(`La bienvenida se cerró, pero no se pudo sincronizar este ajuste: ${error.message}`)}
   finally{button.disabled=false}
 })
 document.querySelector("#rest-form").addEventListener("submit",(event)=>{event.preventDefault();const seconds=Math.max(5,Math.min(900,Number(event.currentTarget.elements.seconds.value)||90));settings.rest=seconds;saveLocal();document.querySelector("#rest-dialog").close();workoutRest(seconds)})

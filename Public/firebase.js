@@ -1,6 +1,11 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-app.js"
 import { getAuth, GoogleAuthProvider } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-auth.js"
-import { getFirestore } from "https://www.gstatic.com/firebasejs/13.3.0/firebase-firestore.js"
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager
+} from "https://www.gstatic.com/firebasejs/13.3.0/firebase-firestore.js"
 
 // La configuración web de Firebase es pública. La seguridad de los datos se
 // aplica con las reglas de Firestore incluidas en firestore.rules.
@@ -17,4 +22,16 @@ const firebaseApp = initializeApp(firebaseConfig)
 export const auth = getAuth(firebaseApp)
 export const googleProvider = new GoogleAuthProvider()
 googleProvider.setCustomParameters({ prompt: "select_account" })
-export const firestore = getFirestore(firebaseApp)
+export let firestorePersistent = false
+let firestore
+try {
+  firestore = initializeFirestore(firebaseApp, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  })
+  firestorePersistent = true
+} catch (error) {
+  // Private browsing or browser storage restrictions can prevent IndexedDB persistence.
+  console.warn("MyFlow will use an in-memory Firestore cache.", error)
+  firestore = getFirestore(firebaseApp)
+}
+export { firestore }

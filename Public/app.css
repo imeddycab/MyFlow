@@ -100,3 +100,108 @@ dialog{border-radius:32px}.dialog-head>.icon-button{width:38px;height:38px}.rout
 @supports (corner-shape:squircle){.brand-icon,.hero,.program,.filters,.workout-main,.workout-aside,.pre-workout,.training-focus,.session-flow-summary,.routine-card,.exercise-card,.stat,.card,.session-row,.analytics-grid>.card,.calendar-card,.day-card,.profile-card,.preferences,.measurements,.tool-card,.summary-detail,.routine-exercise,.planned-routine,.flow-step,.set-row,.suggested-exercises>div,dialog,.welcome-mark{corner-shape:squircle}}
 .auth-gate{min-height:100dvh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--text)}.auth-gate[hidden]{display:none!important}.auth-card{width:min(440px,100%);padding:38px 30px;text-align:center;border:1px solid var(--line);border-radius:30px;background:var(--panel);box-shadow:0 14px 44px rgba(0,0,0,.1)}.auth-card h1{margin:10px 0;font-size:28px;letter-spacing:-.04em}.auth-card p{margin:0 auto 22px;max-width:330px;color:var(--muted);font-size:13px;line-height:1.55}.auth-card .button{width:100%;min-height:48px}.auth-card .auth-error{margin-top:16px;color:#a32626}.auth-card [hidden],.shell[hidden],.mobile-nav[hidden]{display:none!important}
 .intro-dialog .intro-content{padding:28px;text-align:center}.intro-dialog h2{margin:8px 0;font-size:25px;letter-spacing:-.04em}.intro-dialog p{margin:10px auto 18px;max-width:360px;color:var(--muted);font-size:12px;line-height:1.6}.intro-dialog ul{display:grid;gap:8px;margin:0 0 20px;padding:0;list-style:none;text-align:left}.intro-dialog li{display:grid;gap:3px;padding:12px 14px;border:1px solid var(--line);border-radius:16px;background:var(--panel2)}.intro-dialog li b{font-size:11px}.intro-dialog li span{color:var(--muted);font-size:10px;line-height:1.4}.intro-dialog .button{width:100%}.profile-photo,.avatar-photo{width:100%;height:100%;display:block;object-fit:cover;border-radius:inherit}.profile-large:has(.profile-photo){overflow:hidden;padding:0}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Capa de coherencia (nov 2026)
+   Regla de radios concéntricos: radio del contenedor = radio interior + padding.
+   Controles: --radius-control (18px). Filas/tarjetas internas: 22–24px.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root{--field:#151515;--radius-field-sm:12px}
+body{--field-border:var(--line)}
+body.light{--field:#fff;--field-border:rgba(0,0,0,.16)}
+
+/* Campos de formulario: mismo alto, radio, borde y fondo en diálogos, tarjetas y bienvenida */
+label input:not([type=checkbox]):not([type=radio]),label select,label textarea,
+dialog input:not([type=checkbox]),dialog select,.welcome-dialog input,
+.preferences label>select,.tool-card input,.tool-card textarea,.notes-label textarea{
+  width:100%;min-height:44px;padding:0 14px;border:1px solid var(--field-border);border-radius:var(--radius-control);
+  background-color:var(--field);color:var(--text);font:inherit;font-size:12px}
+label textarea,.tool-card textarea,.notes-label textarea{min-height:96px;padding:12px 14px;resize:vertical;line-height:1.5}
+label select,dialog select{padding-right:10px;cursor:pointer}
+/* Excepciones con tamaño propio */
+.search-label input{min-height:0!important}
+.training-focus .set-inputs input:not([type=checkbox]):not([type=radio]){height:61px;padding:0 48px 0 15px;font-size:23px;font-weight:700;border-radius:var(--radius-control)}
+@media(max-width:720px){.training-focus .set-inputs input:not([type=checkbox]):not([type=radio]){height:55px;font-size:20px}}
+.routine-exercise-picker label select{min-height:40px;height:40px;margin-top:5px;background-color:var(--field);font-size:11px}
+body.light label input:not([type=checkbox]),body.light label select,body.light label textarea,body.light dialog input,body.light dialog select{background-color:var(--field)}
+label{color:var(--muted)}body.light label{color:#5a5a5a}
+
+/* Avisos: siempre visibles como toast (también encima de los diálogos) */
+.notice{position:fixed;z-index:60;top:calc(16px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);
+  width:max-content;max-width:min(520px,calc(100vw - 32px));margin:0;padding:12px 18px;border-radius:var(--radius-control);
+  box-shadow:0 10px 30px rgba(0,0,0,.25);font-size:12px;line-height:1.45;text-align:center}
+.notice[hidden]{display:none}
+
+/* Contenedores con controles dentro: radios concéntricos */
+.filters{padding:10px;border-radius:calc(var(--radius-control) + 10px)}
+.filters select,.filter-button,.search-label{min-height:40px;border-radius:var(--radius-control)}
+.filters select{padding:0 10px;font-size:11px;background-color:var(--field)}
+.filter-button.active{background:var(--inverse-bg);color:var(--inverse-text);border-color:var(--inverse-bg)}
+.more-menu{padding:8px;border-radius:29px}
+.workout-toolbar{padding:10px;border-radius:35px}
+@media(max-width:720px){.workout-toolbar{padding:6px;border-radius:29px}.toolbar-button{min-height:45px}}
+.session-flow-summary{padding:14px;border-radius:var(--radius-stack)}
+.session-flow-summary>div:first-child{padding:4px 8px 0}
+.flow-step{padding:9px;border-radius:22px}
+.routine-exercise{padding:10px;border-radius:22px}
+.routine-exercise label input:not([type=checkbox]),.routine-exercise label select{min-height:32px;height:32px;padding:0 6px;border-radius:var(--radius-field-sm);background:var(--field);font-size:10px;text-align:center}
+.suggested-exercises>div{padding:10px 12px;border-radius:24px}
+.suggested-exercises i{background:var(--panel2);color:var(--text)}
+.pre-workout-stats>span{border-radius:999px}
+.previous-card,.paused-banner,.rest-banner,.plate-result{border-radius:var(--radius-control)}
+.empty{border-radius:var(--radius-card)}
+.exercise-symbol{border-radius:16px}
+.measure-grid span{border-radius:14px}
+.intro-dialog li{border-radius:var(--radius-control)}
+.create-card>span{border-radius:14px}
+.auth-card{border-radius:32px}
+.day-cell{border-radius:14px}
+.day-cell.today{border-color:var(--line)}
+.day-cell.today b{text-decoration:underline;text-underline-offset:4px}
+.day-cell.selected{background:var(--inverse-bg);color:var(--inverse-text);border-color:var(--inverse-bg)}
+.day-cell.selected.has-plan:after{background:var(--inverse-text)}
+.planned-routine{border-radius:0}
+.text-button{padding:6px 4px;border-radius:999px}
+
+/* Diálogos */
+dialog{max-height:calc(100dvh - 32px);overflow:auto}
+dialog form{padding:24px}
+dialog footer{flex-wrap:wrap}
+.wide-dialog{width:min(600px,calc(100% - 24px))}
+.timer-presets .button.active{background:var(--inverse-bg);color:var(--inverse-text);border-color:var(--inverse-bg)}
+
+/* Detalles de páginas */
+.program>strong{display:flex;flex-direction:column;align-items:flex-end;font-size:20px}
+.program>strong small{color:var(--muted);font-size:9px;font-weight:600;margin-top:2px}
+.program>strong .progress-track{width:100%}
+.workout-heading-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.workout-heading-actions .text-button{color:var(--muted);font-size:10px}
+.summary-saved{margin-top:10px}
+.preferences .full-button,.profile-card .full-button{margin-top:4px}
+.profile-card .full-button{margin-top:16px}
+.auth-card .auth-error{color:#ff9b9b}body.light .auth-card .auth-error{color:#a32626}
+.avatar{cursor:pointer}
+
+/* Navegación */
+.sidebar{overflow-y:auto}
+.sidebar .brand{margin-bottom:34px}
+.sidebar nav .nav-label{margin:18px 15px 4px}
+.sidebar nav .nav-label:first-child{margin-top:0}
+.sidebar nav button,.mobile-nav button,.more-menu button{position:relative}
+nav [data-page="entrenar"].has-live::after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px var(--bg)}
+.sidebar nav [data-page="entrenar"].has-live::after{right:16px;top:50%;margin-top:-4px}
+.mobile-nav [data-page="entrenar"].has-live::after{top:8px;right:calc(50% - 16px)}
+.mobile-nav #more-button.active{background:var(--panel2);color:var(--text)}
+.more-menu button.active{background:var(--inverse-bg);color:var(--inverse-text)}
+.mobile-nav button{min-width:0}
+.live-banner{width:100%;display:flex;align-items:center;gap:12px;margin:0 0 18px;padding:10px 12px 10px 16px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);text-align:left}
+.live-banner>span:nth-child(2){flex:1;min-width:0}
+.live-banner b,.live-banner small{display:block}
+.live-banner b{font-size:12px}
+.live-banner small{color:var(--muted);font-size:10px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live-banner-cta{flex:none;padding:9px 16px;border-radius:999px;background:var(--inverse-bg);color:var(--inverse-text);font-size:11px;font-weight:800}
+.live-pulse{flex:none;width:9px;height:9px;border-radius:50%;background:var(--text);animation:live-pulse 1.6s ease-in-out infinite}
+@keyframes live-pulse{50%{opacity:.3}}
+@media(prefers-reduced-motion:reduce){.live-pulse{animation:none}}
+.routine-grid>.empty,.history-list>.empty{grid-column:1/-1}
+.live-dot{background:none;padding:0;color:var(--text);font-weight:700}

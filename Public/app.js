@@ -1,7 +1,6 @@
 let auth, firestore, googleProvider
-let onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut
-let collection, deleteDoc, doc, getDoc, getDocFromCache, getDocs, getDocsFromCache, setDoc, updateDoc, waitForPendingWrites
-let firestorePersistent = false
+let onAuthStateChanged, onIdTokenChanged, signInWithPopup, signInWithRedirect, signOut
+let collection, doc, getDoc, getDocFromCache, getDocs, getDocsFromCache
 let firebaseLoadError = null
 try {
   const [firebase, authSDK, firestoreSDK] = await Promise.all([
@@ -11,10 +10,9 @@ try {
   ])
   auth = firebase.auth
   firestore = firebase.firestore
-  firestorePersistent = firebase.firestorePersistent
   googleProvider = firebase.googleProvider
-  ;({ onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } = authSDK)
-  ;({ collection, deleteDoc, doc, getDoc, getDocFromCache, getDocs, getDocsFromCache, setDoc, updateDoc, waitForPendingWrites } = firestoreSDK)
+  ;({ onAuthStateChanged, onIdTokenChanged, signInWithPopup, signInWithRedirect, signOut } = authSDK)
+  ;({ collection, doc, getDoc, getDocFromCache, getDocs, getDocsFromCache } = firestoreSDK)
 } catch (error) {
   firebaseLoadError = error
 }
@@ -45,117 +43,130 @@ let activeSession = null, activeRoutine = null, lastCompleted = null, sets = [],
 let paused = false, workoutStartedAt = 0, timerHandle = null, restHandle = null, restTotal = 0, editingExercises = [], routineSaving = false
 let libraryFilters = { search: "", muscle: "Todos", equipment: "Todo", favorites: false }
 let currentUser = null
-const firebaseDataRoot = () => collection(firestore, "users", currentUser.uid, "routines")
-const firebaseUserDocument = (collectionName, id) => doc(firestore, "users", currentUser.uid, collectionName, id)
-let pendingFirestoreWrites = 0
-let checkingFirestoreQueue = false
+const Sync = window.MyFlowSync
+const userPath = (...parts) => ["users", currentUser.uid, ...parts].join("/")
+let pendingCount = 0, pendingPaths = new Set(), syncState = "synced", flushing = null, flushTimer = null, dataReady = false
 
+// ── Estado de sincronización (barra lateral, chip del encabezado y distintivo del icono)
 function updateSyncStatus() {
+  const offline = !navigator.onLine || syncState === "offline"
+  const changes = `${pendingCount} ${pendingCount === 1 ? "cambio" : "cambios"}`
+  let state, text, short
+  if (syncState === "auth" && pendingCount) { state = "auth"; text = `Vuelve a iniciar sesión para subir ${changes}`; short = `${pendingCount}` }
+  else if (offline) { state = "offline"; text = pendingCount ? `Sin conexión · ${changes} guardados en este dispositivo` : "Sin conexión · puedes seguir usando MyFlow"; short = pendingCount ? `${pendingCount}` : "" }
+  else if (syncState === "syncing" && pendingCount) { state = "syncing"; text = `Subiendo ${changes}…`; short = `${pendingCount}` }
+  else if (pendingCount) { state = "pending"; text = `${changes} por subir`; short = `${pendingCount}` }
+  else { state = "synced"; text = "Todo sincronizado"; short = "" }
   const status = document.querySelector("#sync-status")
-  if (!status) return
-  if (!navigator.onLine) {
-    status.textContent = pendingFirestoreWrites
-      ? (firestorePersistent ? "Sin conexión · cambios guardados en este dispositivo" : "Sin conexión · cambios temporales en memoria")
-      : "Sin conexión · modo sin conexión"
-    status.dataset.state = "offline"
-  } else if (pendingFirestoreWrites || checkingFirestoreQueue) {
-    status.textContent = "Sincronizando cambios…"
-    status.dataset.state = "pending"
-  } else {
-    status.textContent = "Sincronizado con Firestore"
-    status.dataset.state = "synced"
+  if (status) { status.textContent = text; status.dataset.state = state }
+  const chip = document.querySelector("#sync-chip")
+  if (chip) {
+    chip.dataset.state = state
+    chip.title = `${text}. Pulsa para sincronizar ahora.`
+    chip.setAttribute("aria-label", chip.title)
+    chip.querySelector(".sync-chip-count").textContent = short
+    chip.querySelector(".sync-chip-text").textContent = state === "synced" ? "Sincronizado" : state === "offline" ? "Sin conexión" : state === "auth" ? "Reconectar" : "Pendiente"
   }
 }
 
-function networkError(error) {
-  return !navigator.onLine || ["unavailable", "deadline-exceeded", "network-request-failed"].includes(error?.code)
+async function refreshPending() {
+  if (!currentUser) return
+  try {
+    const items = await Sync.list(currentUser.uid)
+    pendingCount = items.length
+    pendingPaths = new Set(items.map((item) => item.path))
+  } catch { pendingCount = 0; pendingPaths = new Set() }
+  updateSyncStatus()
+  Sync.updateBadge(pendingCount)
+}
+const isPending = (collectionName, id) => Boolean(currentUser) && pendingPaths.has(userPath(collectionName, id))
+
+// Se agrupa y se retrasa un instante para guardar el estado ya actualizado por quien llamó.
+function persistSnapshot() {
+  clearTimeout(persistSnapshot.timer)
+  persistSnapshot.timer = setTimeout(() => {
+    if (!currentUser || !dataReady) return
+    Sync.saveSnapshot(currentUser.uid, { routines, sessions, profile }).catch(() => {})
+  }, 60)
 }
 
-async function readDocument(ref) {
-  try { return await getDoc(ref) }
-  catch (error) {
-    if (!networkError(error)) throw error
-    try { return await getDocFromCache(ref) } catch { throw error }
-  }
-}
-
-async function readCollection(ref) {
-  try { return await getDocs(ref) }
-  catch (error) {
-    if (!networkError(error)) throw error
-    try { return await getDocsFromCache(ref) } catch { throw error }
-  }
-}
-
+// API de sincronización en segundo plano (Chrome, Edge, Android). Safari no la
+// tiene: en ese caso la página reintenta al abrirse, al volver la conexión y cada pocos segundos.
 async function requestBackgroundSync() {
   if (!navigator.serviceWorker) return false
   try {
     const registration = await navigator.serviceWorker.ready
-    if (registration.sync?.register) {
-      await registration.sync.register("myflow-firestore-sync")
-      return true
-    }
-  } catch (error) {
-    console.info("Background Sync is unavailable; MyFlow will retry when reopened or online.", error)
-  }
+    if (registration.sync?.register) { await registration.sync.register(Sync.SYNC_TAG); return true }
+  } catch (error) { console.info("Sincronización en segundo plano no disponible.", error) }
   return false
 }
 
-async function commitFirestoreWrite(writePromise, optimisticResult) {
-  pendingFirestoreWrites += 1
-  updateSyncStatus()
-  const completion = Promise.resolve(writePromise).then(
-    () => ({ ok: true }),
-    (error) => ({ ok: false, error })
-  )
-  const finish = (outcome) => {
-    pendingFirestoreWrites = Math.max(0, pendingFirestoreWrites - 1)
-    updateSyncStatus()
-    if (!outcome.ok) showNotice(`No se pudo sincronizar un cambio: ${outcome.error.message}`)
-  }
-
-  if (!navigator.onLine) {
-    completion.then(finish)
-    requestBackgroundSync()
-    return optimisticResult
-  }
-
-  let timeout
-  const outcome = await Promise.race([
-    completion,
-    new Promise((resolve) => { timeout = setTimeout(() => resolve({ pending: true }), 1800) })
-  ])
-  clearTimeout(timeout)
-  if (outcome.pending) {
-    completion.then(finish)
-    requestBackgroundSync()
-    showNotice("Cambio guardado localmente; se sincronizará al recuperar la conexión.")
-    return optimisticResult
-  }
-  finish(outcome)
-  if (!outcome.ok) throw outcome.error
-  return optimisticResult
+// Sincronización periódica: el service worker actualiza la app y tus datos aunque no la abras.
+async function registerPeriodicSync() {
+  try {
+    const registration = await navigator.serviceWorker?.ready
+    if (!registration?.periodicSync) return
+    const status = await navigator.permissions.query({ name: "periodic-background-sync" })
+    if (status.state === "granted") await registration.periodicSync.register(Sync.PERIODIC_TAG, { minInterval: 12 * 60 * 60 * 1000 })
+  } catch (error) { console.info("Sincronización periódica no disponible.", error) }
 }
 
-async function flushPendingWrites() {
-  if (!currentUser || !navigator.onLine || !waitForPendingWrites) return false
-  checkingFirestoreQueue = true
-  updateSyncStatus()
-  let timeout
-  try {
-    await Promise.race([
-      waitForPendingWrites(firestore),
-      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("La sincronización sigue pendiente.")), 15000) })
-    ])
-    return true
-  } catch (error) {
-    if (!networkError(error)) showNotice(`No se pudieron sincronizar los cambios: ${error.message}`)
-    return false
-  } finally {
-    clearTimeout(timeout)
-    checkingFirestoreQueue = false
-    updateSyncStatus()
-  }
+function scheduleFlush(delay = 0) {
+  clearTimeout(flushTimer)
+  flushTimer = setTimeout(() => { flushOutbox() }, delay)
+}
+
+async function flushOutbox({ manual = false } = {}) {
+  if (!currentUser) return { remaining: 0 }
+  if (flushing) return flushing
+  flushing = (async () => {
+    await refreshPending()
+    if (!pendingCount) { syncState = "synced"; updateSyncStatus(); if (manual) showNotice("Todo está sincronizado."); return { remaining: 0 } }
+    syncState = "syncing"; updateSyncStatus()
+    const user = currentUser
+    const result = await Sync.flush(user.uid, () => user.getIdToken())
+    syncState = result.status === "busy" ? "syncing" : result.status
+    await refreshPending()
+    if (result.rejected?.length) showNotice(`Firestore rechazó ${result.rejected.length} cambio(s); se descartaron para no bloquear la cola.`)
+    if (result.remaining) {
+      // Reintento con espera creciente mientras la app esté visible.
+      const delay = result.status === "busy" ? 3000 : Math.min(60000, 8000 * (flushOutbox.failures = (flushOutbox.failures || 0) + 1))
+      if (document.visibilityState === "visible") scheduleFlush(delay)
+      requestBackgroundSync()
+      if (manual) showNotice(result.status === "auth" ? "Tu sesión caducó: vuelve a iniciar sesión para subir los cambios." : "Sin conexión. Tus cambios siguen guardados y se subirán solos.")
+    } else {
+      flushOutbox.failures = 0
+      if (result.sent && manual) showNotice("Cambios subidos a tu cuenta.")
+      else if (result.sent) showNotice(`${result.sent === 1 ? "1 cambio sincronizado" : `${result.sent} cambios sincronizados`} con tu cuenta.`)
+    }
+    if (result.sent) render()
+    return result
+  })().finally(() => { flushing = null })
+  return flushing
+}
+
+// Guarda el cambio en la cola local y devuelve el control a la interfaz al instante.
+async function queueWrite(kind, path, data) {
+  try { await Sync.enqueue({ uid: currentUser.uid, kind, path, data }) }
+  catch (error) { throw new Error(`No se pudo guardar en este dispositivo: ${error.message}`) }
+  await refreshPending()
+  persistSnapshot()
+  if (navigator.onLine) scheduleFlush(300)
+  requestBackgroundSync()
+}
+
+function withTimeout(promise, ms) {
+  let timer
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error("Tiempo de espera agotado"), { code: "deadline-exceeded" })), ms) })]).finally(() => clearTimeout(timer))
+}
+// Lecturas: servidor con tiempo límite y, si falla, la caché local de Firestore.
+async function readDocument(ref) {
+  try { return await withTimeout(getDoc(ref), navigator.onLine ? 8000 : 1500) }
+  catch (error) { try { return await getDocFromCache(ref) } catch { throw error } }
+}
+async function readCollection(ref) {
+  try { return await withTimeout(getDocs(ref), navigator.onLine ? 8000 : 1500) }
+  catch (error) { try { return await getDocsFromCache(ref) } catch { throw error } }
 }
 
 async function api(path, options = {}) {
@@ -164,61 +175,45 @@ async function api(path, options = {}) {
   const payload = options.body ? JSON.parse(options.body) : {}
   const parts = path.split("/").filter(Boolean)
   const collectionName = parts[0]
+  const now = new Date().toISOString()
 
   if (path === "profile") {
-    const profileRef = firebaseUserDocument("profile", "main")
     if (method === "GET") {
-      const snapshot = await readDocument(profileRef)
+      const snapshot = await readDocument(doc(firestore, "users", currentUser.uid, "profile", "main"))
       return { profile: snapshot.exists() ? snapshot.data() : null }
     }
     if (method === "PUT") {
       const name = String(payload.name || "").trim()
       if (!name) throw new Error("Escribe tu nombre para continuar.")
-      const existing = await readDocument(profileRef).catch(() => null)
-      const profileData = {
-        ...(existing?.exists() ? existing.data() : profile || {}),
-        name,
-        hasCompletedIntro: payload.hasCompletedIntro ?? (existing?.exists() ? existing.data().hasCompletedIntro === true : false),
-        updatedAt: new Date().toISOString()
-      }
-      await commitFirestoreWrite(setDoc(profileRef, profileData, { merge: true }), profileData)
+      const profileData = { ...(profile || {}), name, hasCompletedIntro: payload.hasCompletedIntro ?? profile?.hasCompletedIntro === true, updatedAt: now }
+      await queueWrite("merge", userPath("profile", "main"), profileData)
       return profileData
     }
   }
 
   if (collectionName === "routines") {
     if (parts.length === 1 && method === "GET") {
-      let snapshots = await readCollection(firebaseDataRoot())
-      // Remove only the four untouched sample routines created by older app versions.
-      const sampleDescriptions = new Map([
-        ["Push Day", "Pecho · Hombros · Tríceps"],
-        ["Pull Strength", "Espalda · Bíceps"],
-        ["Leg Power", "Cuádriceps · Glúteos"],
-        ["Upper Hypertrophy", "Torso completo"]
-      ])
-      const samples = snapshots.docs.filter((snapshot) => {
-        const item = snapshot.data()
-        return sampleDescriptions.get(item.name) === item.description && !item.dayOfWeek && (!item.exercises || item.exercises.length === 0)
-      })
-      if (samples.length) {
-        await Promise.all(samples.map((snapshot) => commitFirestoreWrite(deleteDoc(snapshot.ref), null)))
-        snapshots = await readCollection(firebaseDataRoot())
-      }
-      return snapshots.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+      const snapshots = await readCollection(collection(firestore, "users", currentUser.uid, "routines"))
+      // Quita solo las cuatro rutinas de ejemplo sin tocar que creaban versiones antiguas.
+      const sampleDescriptions = new Map([["Push Day", "Pecho · Hombros · Tríceps"], ["Pull Strength", "Espalda · Bíceps"], ["Leg Power", "Cuádriceps · Glúteos"], ["Upper Hypertrophy", "Torso completo"]])
+      const isSample = (item) => sampleDescriptions.get(item.name) === item.description && !item.dayOfWeek && (!item.exercises || item.exercises.length === 0)
+      const list = snapshots.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+      for (const item of list.filter(isSample)) await queueWrite("delete", userPath("routines", item.id))
+      return list.filter((item) => !isSample(item))
     }
     if (parts.length === 1 && method === "POST") {
-      const routine = { ...payload, updatedAt: new Date().toISOString() }
-      const routineRef = doc(firebaseDataRoot())
-      const result = { id: routineRef.id, ...routine }
-      return await commitFirestoreWrite(setDoc(routineRef, routine), result)
+      const id = Sync.newId(), routine = { ...payload, updatedAt: now }
+      await queueWrite("set", userPath("routines", id), routine)
+      return { id, ...routine }
     }
     if (parts.length === 2 && method === "PUT") {
-      const routine = { ...payload, updatedAt: new Date().toISOString() }
-      const result = { id: parts[1], ...routine }
-      return await commitFirestoreWrite(setDoc(firebaseUserDocument("routines", parts[1]), routine, { merge: true }), result)
+      const routine = { ...payload, updatedAt: now }
+      await queueWrite("merge", userPath("routines", parts[1]), routine)
+      return { ...(routines.find((item) => item.id === parts[1]) || {}), ...routine, id: parts[1] }
     }
     if (parts.length === 2 && method === "DELETE") {
-      return await commitFirestoreWrite(deleteDoc(firebaseUserDocument("routines", parts[1])), null)
+      await queueWrite("delete", userPath("routines", parts[1]))
+      return null
     }
   }
 
@@ -226,29 +221,26 @@ async function api(path, options = {}) {
     if (parts.length === 1 && method === "GET") {
       const snapshots = await readCollection(collection(firestore, "users", currentUser.uid, "sessions"))
       return snapshots.docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
-        .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt))
     }
     if (parts.length === 1 && method === "POST") {
-      const now = new Date().toISOString()
-      const session = { ...payload, startedAt: now, updatedAt: now, finishedAt: null }
-      const sessionRef = doc(collection(firestore, "users", currentUser.uid, "sessions"))
-      const result = { id: sessionRef.id, ...session }
-      return await commitFirestoreWrite(setDoc(sessionRef, session), result)
+      const id = Sync.newId(), session = { ...payload, startedAt: now, updatedAt: now, finishedAt: null }
+      await queueWrite("set", userPath("sessions", id), session)
+      return { id, ...session }
     }
     if (parts.length === 2 && method === "PUT") {
-      const sessionRef = firebaseUserDocument("sessions", parts[1])
-      const session = { ...(sessions.find((item) => item.id === parts[1]) || {}), ...payload, updatedAt: new Date().toISOString() }
-      const result = { id: parts[1], ...session }
-      return await commitFirestoreWrite(setDoc(sessionRef, session, { merge: true }), result)
+      const { id: _id, ...previous } = sessions.find((item) => item.id === parts[1]) || {}
+      const session = { ...previous, ...payload, updatedAt: now }
+      await queueWrite("merge", userPath("sessions", parts[1]), session)
+      return { id: parts[1], ...session }
     }
     if (parts.length === 3 && parts[2] === "finish" && method === "POST") {
-      const sessionRef = firebaseUserDocument("sessions", parts[1])
-      const finishedAt = new Date().toISOString()
-      const result = { ...(sessions.find((item) => item.id === parts[1]) || {}), id: parts[1], finishedAt, updatedAt: finishedAt }
-      return await commitFirestoreWrite(updateDoc(sessionRef, { finishedAt, updatedAt: finishedAt }), result)
+      const changes = { finishedAt: now, updatedAt: now }
+      await queueWrite("merge", userPath("sessions", parts[1]), changes)
+      return { ...(sessions.find((item) => item.id === parts[1]) || {}), ...changes, id: parts[1] }
     }
     if (parts.length === 2 && method === "DELETE") {
-      return await commitFirestoreWrite(deleteDoc(firebaseUserDocument("sessions", parts[1])), null)
+      await queueWrite("delete", userPath("sessions", parts[1]))
+      return null
     }
   }
 
@@ -335,8 +327,10 @@ function exerciseData(routine) {
 }
 function routineCard(routine, index) {
   const ex = exerciseData(routine)
-  return `<article class="routine-card"><header><div><h3>${esc(routine.name)}</h3><p>${esc(routine.description || "Rutina personalizada")}</p></div><span class="routine-tag">${routine.dayOfWeek ? esc(routine.dayOfWeek.toUpperCase()) : `0${(index % 9) + 1}`}</span></header><div class="routine-meta"><span>${ex.length} ejercicios · ${totalSetsOf(routine)} series</span><span>~${estimateMinutes(routine)} min</span></div><div class="routine-actions"><button class="button secondary" data-edit="${routine.id}">Editar</button><button class="button" data-start="${routine.id}">▶ Iniciar</button><button class="icon-button delete-routine" data-delete="${routine.id}" aria-label="Eliminar rutina">×</button></div></article>`
+  return `<article class="routine-card"><header><div><h3>${esc(routine.name)}</h3><p>${esc(routine.description || "Rutina personalizada")}</p></div><span class="routine-tag">${routine.dayOfWeek ? esc(routine.dayOfWeek.toUpperCase()) : `0${(index % 9) + 1}`}</span></header>${isPending("routines", routine.id) ? pendingTag() : ""}<div class="routine-meta"><span>${plural(ex.length,"ejercicio")} · ${totalSetsOf(routine)} series</span><span>~${estimateMinutes(routine)} min</span></div><div class="routine-actions"><button class="button secondary" data-edit="${routine.id}">Editar</button><button class="button" data-start="${routine.id}">▶ Iniciar</button><button class="icon-button delete-routine" data-delete="${routine.id}" aria-label="Eliminar rutina">×</button></div></article>`
 }
+function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}` }
+function pendingTag() { return `<span class="pending-tag" title="Guardado en este dispositivo; se subirá a tu cuenta al recuperar la conexión">⟳ Sin subir</span>` }
 function volumeOf(session) { return (session?.sets || []).filter((set) => set.completed).reduce((sum, set) => sum + Number(set.weight) * Number(set.reps), 0) }
 function doneSessions() { return sessions.filter((session) => session.finishedAt) }
 function todaysRoutine() {
@@ -346,7 +340,7 @@ function todaysRoutine() {
 function renderHome() {
   const routine = todaysRoutine(), completed = doneSessions(), volume = completed.reduce((sum, session) => sum + volumeOf(session), 0)
   const recent = [...sessions].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)).slice(0, 3)
-  return `<section class="hero"><div class="hero-copy"><span class="eyebrow">ENTRENAMIENTO DE HOY</span><h2>${esc(routine?.name || "Tu primera rutina")}</h2><p>${esc(routine?.description || "Crea tu propia rutina para empezar.")}</p><div class="chips"><span class="chip">${routine?`${exerciseData(routine).length} ejercicios`:"Sin rutinas"}</span>${routine?`<span class="chip">${totalSetsOf(routine)} series</span><span class="chip">~${estimateMinutes(routine)} min</span>`:""}</div>${routine?`<button class="button" data-start="${routine.id}">▶ &nbsp;Comenzar entrenamiento</button>`:`<button class="button" data-create-routine>＋ &nbsp;Crear mi primera rutina</button>`}</div></section><div class="section-head"><div><span class="eyebrow">RESUMEN</span><h2>Tu semana en movimiento</h2></div><button class="text-button" data-page="progreso">Ver estadísticas →</button></div><div class="stats"><article class="stat"><small>Entrenamientos</small><strong>${completed.length}</strong><span>${sessions.length ? `${sessions.length} sesiones registradas` : "Empieza tu primera sesión"}</span></article><article class="stat"><small>Tiempo total</small><strong>${completed.reduce((a,s)=>a+sessionMinutes(s),0)} min</strong><span>Sesiones completadas</span></article><article class="stat"><small>Volumen acumulado</small><strong>${fmtVolume(volume)}</strong><span>Series registradas</span></article></div><div class="section-head"><div><span class="eyebrow">TUS PLANES</span><h2>Mis rutinas</h2></div><button class="text-button" data-page="rutinas">Ver todas →</button></div><div class="routine-grid">${routines.slice(0,3).map(routineCard).join("") || `<div class="empty">Todavía no tienes rutinas. Crea una para empezar.</div>`}</div><div class="section-head"><div><span class="eyebrow">ACTIVIDAD</span><h2>Últimos entrenamientos</h2></div><button class="text-button" data-page="historial">Ver historial</button></div><div class="history-list">${recent.map(sessionRow).join("") || `<div class="empty">Tus sesiones aparecerán aquí.</div>`}</div>`
+  return `<section class="hero"><div class="hero-copy"><span class="eyebrow">ENTRENAMIENTO DE HOY</span><h2>${esc(routine?.name || "Tu primera rutina")}</h2><p>${esc(routine?.description || "Crea tu propia rutina para empezar.")}</p><div class="chips"><span class="chip">${routine?`${plural(exerciseData(routine).length,"ejercicio")}`:"Sin rutinas"}</span>${routine?`<span class="chip">${totalSetsOf(routine)} series</span><span class="chip">~${estimateMinutes(routine)} min</span>`:""}</div>${routine?`<button class="button" data-start="${routine.id}">▶ &nbsp;Comenzar entrenamiento</button>`:`<button class="button" data-create-routine>＋ &nbsp;Crear mi primera rutina</button>`}</div></section><div class="section-head"><div><span class="eyebrow">RESUMEN</span><h2>Tu semana en movimiento</h2></div><button class="text-button" data-page="progreso">Ver estadísticas →</button></div><div class="stats"><article class="stat"><small>Entrenamientos</small><strong>${completed.length}</strong><span>${sessions.length ? `${sessions.length} sesiones registradas` : "Empieza tu primera sesión"}</span></article><article class="stat"><small>Tiempo total</small><strong>${completed.reduce((a,s)=>a+sessionMinutes(s),0)} min</strong><span>Sesiones completadas</span></article><article class="stat"><small>Volumen acumulado</small><strong>${fmtVolume(volume)}</strong><span>Series registradas</span></article></div><div class="section-head"><div><span class="eyebrow">TUS PLANES</span><h2>Mis rutinas</h2></div><button class="text-button" data-page="rutinas">Ver todas →</button></div><div class="routine-grid">${routines.slice(0,3).map(routineCard).join("") || `<div class="empty">Todavía no tienes rutinas. Crea una para empezar.</div>`}</div><div class="section-head"><div><span class="eyebrow">ACTIVIDAD</span><h2>Últimos entrenamientos</h2></div><button class="text-button" data-page="historial">Ver historial</button></div><div class="history-list">${recent.map(sessionRow).join("") || `<div class="empty">Tus sesiones aparecerán aquí.</div>`}</div>`
 }
 function renderRoutines() {
   const tabs = ["Todos", "Con día asignado", "Sin día"]
@@ -355,7 +349,7 @@ function renderRoutines() {
   const next = todaysRoutine()
   const scheduled = routines.filter((r) => r.dayOfWeek).length
   const weekPct = routines.length ? Math.round(scheduled / routines.length * 100) : 0
-  const program = next ? `<section class="program"><div><span class="eyebrow">PRÓXIMO ENTRENAMIENTO</span><h2>${esc(next.name)}</h2><p>${next.dayOfWeek ? `Programada para ${esc(next.dayOfWeek.toLocaleLowerCase("es-MX"))}` : "Sin día asignado"} · ${exerciseData(next).length} ejercicios · ~${estimateMinutes(next)} min</p></div><strong>${scheduled}/${routines.length}<small>con día</small><span class="progress-track"><i style="width:${weekPct}%"></i></span></strong><button class="button" data-start="${next.id}">Entrenar ahora</button></section>` : ""
+  const program = next ? `<section class="program"><div><span class="eyebrow">PRÓXIMO ENTRENAMIENTO</span><h2>${esc(next.name)}</h2><p>${next.dayOfWeek ? `Programada para ${esc(next.dayOfWeek.toLocaleLowerCase("es-MX"))}` : "Sin día asignado"} · ${plural(exerciseData(next).length,"ejercicio")} · ~${estimateMinutes(next)} min</p></div><strong>${scheduled}/${routines.length}<small>con día</small><span class="progress-track"><i style="width:${weekPct}%"></i></span></strong><button class="button" data-start="${next.id}">Entrenar ahora</button></section>` : ""
   return `${program}<div class="section-head${program ? "" : " page-section-head"}"><div><span class="eyebrow">PLANIFICACIÓN</span><h2>Mis rutinas</h2></div><button class="button" data-create-routine>＋ Crear rutina</button></div><div class="tabs">${tabs.map((x)=>`<button data-routine-tab="${x}" class="${routineTab===x?"active":""}">${x}</button>`).join("")}</div><div class="routine-grid">${visible.map(routineCard).join("") || `<div class="empty">No hay rutinas en esta categoría todavía.</div>`}<button class="create-card" data-create-routine><span>＋</span><b>Crear nueva rutina</b><small>Diseña tu próximo entrenamiento</small></button></div>`
 }
 function renderExerciseEditor() {
@@ -396,7 +390,7 @@ function sessionRow(session) {
   const volume = volumeOf(session), setsDone = (session.sets||[]).filter((x)=>x.completed).length
   const isActive = !session.finishedAt && activeSession?.id === session.id
   const action = session.finishedAt ? "" : `<button class="button secondary" ${isActive ? `data-page="entrenar">Continuar` : `data-resume="${session.id}">Reanudar`}</button>`
-  return `<article class="session-row"><div><h3>${esc(session.routineName)}</h3><p>${fmtDate(session.startedAt,{dateStyle:"medium",timeStyle:"short"})} · ${sessionMinutes(session)} min · ${setsDone} series${session.finishedAt?"":" · En progreso"}</p></div><div class="session-volume">${fmtVolume(volume)}<small>volumen</small></div>${action}</article>`
+  return `<article class="session-row"><div><h3>${esc(session.routineName)}</h3><p>${fmtDate(session.startedAt,{dateStyle:"medium",timeStyle:"short"})} · ${sessionMinutes(session)} min · ${setsDone} series${session.finishedAt?"":" · En progreso"}</p>${isPending("sessions", session.id) ? pendingTag() : ""}</div><div class="session-volume">${fmtVolume(volume)}<small>volumen</small></div>${action}</article>`
 }
 function renderHistory() {
   const ordered=[...sessions].sort((a,b)=>new Date(b.startedAt)-new Date(a.startedAt))
@@ -479,7 +473,7 @@ async function startWorkout(routine) {
   if(!sets.length) sets=[newSet()]
   sessionSeconds=0;restSeconds=0;paused=false
   activeSession=await api("sessions",{method:"POST",body:JSON.stringify({routineName:activeRoutine.name,sets,durationSeconds:0})})
-  sessions=[activeSession,...sessions.filter((session)=>session.id!==activeSession.id)]
+  sessions=[activeSession,...sessions.filter((session)=>session.id!==activeSession.id)];persistSnapshot()
   workoutStartedAt=new Date(activeSession.startedAt).getTime()
   navTitle("entrenar");startClock()
 }
@@ -570,21 +564,68 @@ function updateCalculators() {
   const rmWeight=Number(document.querySelector("#rm-weight")?.value)||0, rmReps=Number(document.querySelector("#rm-reps")?.value)||1
   const rm=document.querySelector("#rm-result");if(rm)rm.textContent=`${fmtWeight(rmWeight*(1+Math.min(rmReps,30)/30))} estimados`
 }
-async function refreshData() { [routines,sessions]=await Promise.all([api("routines"),api("sessions")]); }
+// Datos del servidor (o de la caché de Firestore) con los cambios pendientes aplicados encima.
+async function refreshData() {
+  const [serverRoutines, serverSessions, profileResponse] = await Promise.all([api("routines"), api("sessions"), api("profile")])
+  const items = await Sync.list(currentUser.uid)
+  applyData(Sync.overlay(currentUser.uid, { routines: serverRoutines, sessions: serverSessions, profile: profileResponse.profile }, items))
+}
+function applyData(data) {
+  routines = data.routines || []
+  sessions = [...(data.sessions || [])].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt))
+  profile = data.profile || null
+  // La sesión activa en memoria siempre es la versión más reciente.
+  if (activeSession && !activeSession.finishedAt) {
+    const index = sessions.findIndex((session) => session.id === activeSession.id)
+    if (index >= 0) sessions[index] = activeSession
+  }
+}
+function resumeUnfinished() {
+  if (activeSession) return true
+  const unfinished = sessions.find((session) => !session.finishedAt)
+  if (!unfinished) return false
+  activeSession = unfinished; activeRoutine = routines.find((r) => r.name === unfinished.routineName) || { name: unfinished.routineName }
+  sets = unfinished.sets?.length ? unfinished.sets : [newSet()]; workoutStartedAt = new Date(unfinished.startedAt).getTime()
+  sessionSeconds = unfinished.durationSeconds ?? Math.floor((Date.now() - workoutStartedAt) / 1000); startClock()
+  return true
+}
+function showOnboardingIfNeeded() {
+  if (!currentUser || document.querySelector("dialog[open]")) return
+  const googleName = currentUser.displayName || currentUser.providerData?.find((provider) => provider.providerId === "google.com")?.displayName || ""
+  if (!profile?.name) { document.querySelector("#welcome-form").elements.name.value = googleName; document.querySelector("#welcome-dialog").showModal() }
+  else if (profile.hasCompletedIntro !== true && localStorage.getItem(`myflow-${currentUser.uid}-intro-completed`) !== "true") { document.querySelector("#intro-name").textContent = profile.name; document.querySelector("#intro-dialog").showModal() }
+}
+const userIsBusy = () => Boolean(document.querySelector("dialog[open]")) || (document.activeElement && view.contains(document.activeElement) && document.activeElement.matches("input,select,textarea"))
+// Primero se muestra al instante la copia guardada en el dispositivo; después se
+// actualiza con el servidor en segundo plano (si hay conexión).
 async function load() {
+  const uid = currentUser.uid
+  loadLocal(); dataReady = false
+  await refreshPending()
+  let snapshot = null
+  try { snapshot = await Sync.loadSnapshot(uid) } catch {}
+  if (snapshot) {
+    applyData(Sync.overlay(uid, snapshot, await Sync.list(uid).catch(() => [])))
+    dataReady = true
+    navTitle(resumeUnfinished() ? "entrenar" : (pageFromHash() || "inicio"), { replace: true })
+    if (snapshot.profile?.name) showOnboardingIfNeeded()
+  } else {
+    view.innerHTML = `<div class="loading">Cargando tu cuenta…</div>`
+  }
   try {
-    loadLocal()
     await refreshData()
-    const profileResponse=await api("profile")
-    profile=profileResponse.profile
-    const unfinished=sessions.find((session)=>!session.finishedAt)
-    if(unfinished){activeSession=unfinished;activeRoutine=routines.find((r)=>r.name===unfinished.routineName)||{name:unfinished.routineName};sets=unfinished.sets?.length?unfinished.sets:[newSet()];workoutStartedAt=new Date(unfinished.startedAt).getTime();sessionSeconds=unfinished.durationSeconds??Math.floor((Date.now()-workoutStartedAt)/1000);startClock()}
-    // Una sesión en curso tiene prioridad; si no, se respeta la sección de la URL.
-    navTitle(unfinished ? "entrenar" : (pageFromHash() || "inicio"), { replace: true })
-    const googleName=currentUser?.displayName||currentUser?.providerData?.find((provider)=>provider.providerId==="google.com")?.displayName||""
-    if(!profile?.name){document.querySelector('#welcome-form').elements.name.value=googleName;document.querySelector("#welcome-dialog").showModal()}
-    else if(profile.hasCompletedIntro!==true&&localStorage.getItem(`myflow-${currentUser.uid}-intro-completed`)!=="true"){document.querySelector("#intro-name").textContent=profile.name;document.querySelector("#intro-dialog").showModal()}
-  } catch(error) { showNotice(`No se pudieron cargar tus datos: ${error.message}`);view.innerHTML=`<div class="empty">No se pudo cargar tu cuenta. Comprueba que las reglas de Firestore estén publicadas y vuelve a intentarlo.</div>` }
+    if (currentUser?.uid !== uid) return
+    const firstLoad = !dataReady
+    dataReady = true
+    persistSnapshot()
+    if (firstLoad) navTitle(resumeUnfinished() ? "entrenar" : (pageFromHash() || "inicio"), { replace: true })
+    else { resumeUnfinished(); if (!userIsBusy()) render() }
+    showOnboardingIfNeeded()
+  } catch (error) {
+    if (snapshot) { syncState = "offline"; updateSyncStatus(); return }
+    showNotice(`No se pudieron cargar tus datos: ${error.message}`)
+    view.innerHTML = `<div class="empty">No se pudo cargar tu cuenta. Revisa tu conexión y vuelve a intentarlo.<br><br><button class="button" data-retry-load>Reintentar</button></div>`
+  }
 }
 
 // Navigation and actions
@@ -592,7 +633,12 @@ view.addEventListener("click",async(event)=>{
   const button=event.target.closest("button");if(!button)return
   try {
     if(button.dataset.page){navTitle(button.dataset.page);return}
-    if(button.hasAttribute("data-signout")){await signOut(auth);return}
+    if(button.hasAttribute("data-retry-load")){load();return}
+    if(button.hasAttribute("data-signout")){
+      await refreshPending()
+      if(pendingCount&&!confirm(`Tienes ${pendingCount} ${pendingCount===1?"cambio":"cambios"} sin subir. Se quedarán guardados en este dispositivo y se subirán cuando vuelvas a iniciar sesión. ¿Cerrar sesión?`))return
+      await signOut(auth);return
+    }
     if(button.hasAttribute("data-create-routine")){openRoutineEditor();return}
     if(button.dataset.routineTab){routineTab=button.dataset.routineTab;render();return}
     if(button.hasAttribute("data-save-profile")){
@@ -601,7 +647,7 @@ view.addEventListener("click",async(event)=>{
       render();showNotice("Tu nombre quedó guardado en tu perfil.");return
     }
     if(button.dataset.edit){openRoutineEditor(routines.find((r)=>r.id===button.dataset.edit));return}
-    if(button.dataset.delete){const routine=routines.find((r)=>r.id===button.dataset.delete);if(confirm(`¿Eliminar la rutina "${routine?.name||"sin nombre"}"? Esta acción no se puede deshacer.`)){await api(`routines/${button.dataset.delete}`,{method:"DELETE"});Object.keys(plans).forEach((key)=>{plans[key]=plans[key].filter((id)=>id!==button.dataset.delete);if(!plans[key].length)delete plans[key]});saveLocal();await refreshData();render();showNotice("Rutina eliminada.")}return}
+    if(button.dataset.delete){const routine=routines.find((r)=>r.id===button.dataset.delete);if(confirm(`¿Eliminar la rutina "${routine?.name||"sin nombre"}"? Esta acción no se puede deshacer.`)){await api(`routines/${button.dataset.delete}`,{method:"DELETE"});routines=routines.filter((r)=>r.id!==button.dataset.delete);persistSnapshot();Object.keys(plans).forEach((key)=>{plans[key]=plans[key].filter((id)=>id!==button.dataset.delete);if(!plans[key].length)delete plans[key]});saveLocal();render();showNotice("Rutina eliminada.")}return}
     if(button.dataset.start!==undefined){const routine=routines.find((r)=>r.id===button.dataset.start);if(!routine){showNotice("Crea una rutina antes de comenzar.");navTitle("rutinas");return}await startWorkout(routine);return}
     if(button.hasAttribute("data-create-exercise")){openExerciseDialog(false);return}
     if(button.hasAttribute("data-toggle-favorites")){libraryFilters.favorites=!libraryFilters.favorites;render();return}
@@ -675,7 +721,12 @@ routineForm.addEventListener("submit",async(event)=>{
   const submitButton=routineForm.querySelector('[type="submit"]')
   if(routineSaving)return
   routineSaving=true;submitButton.disabled=true
-  try{if(id)await api(`routines/${id}`,{method:"PUT",body:JSON.stringify(payload)});else await api("routines",{method:"POST",body:JSON.stringify(payload)});await refreshData();routineDialog.close();render();showNotice("Rutina guardada.")}
+  try{
+    const saved=id?await api(`routines/${id}`,{method:"PUT",body:JSON.stringify(payload)}):await api("routines",{method:"POST",body:JSON.stringify(payload)})
+    routines=id?routines.map((routine)=>routine.id===id?saved:routine):[...routines,saved]
+    persistSnapshot();routineDialog.close();render()
+    showNotice(navigator.onLine?"Rutina guardada.":"Rutina guardada en este dispositivo. Se subirá al recuperar la conexión.")
+  }
   catch(error){showNotice(error.message)}
   finally{routineSaving=false;submitButton.disabled=false}
 })
@@ -737,7 +788,7 @@ async function finishWorkout(){
   if(!activeSession){showNotice("Inicia la sesión antes de finalizarla.");return}
   const pending=sets.filter((x)=>!x.completed).length
   if(pending&&!confirm(`Te quedan ${pending} ${pending===1?"serie":"series"} sin completar. ¿Finalizar y guardar la sesión de todos modos?`))return
-  await saveSession();lastCompleted=await api(`sessions/${activeSession.id}/finish`,{method:"POST"});clearInterval(timerHandle);clearInterval(restHandle);restSeconds=0;paused=false;await refreshData();activeSession=null;activeRoutine=null;sets=[];navTitle("resumen")
+  await saveSession();lastCompleted=await api(`sessions/${activeSession.id}/finish`,{method:"POST"});sessions=sessions.map((session)=>session.id===lastCompleted.id?lastCompleted:session);persistSnapshot();clearInterval(timerHandle);clearInterval(restHandle);restSeconds=0;paused=false;activeSession=null;activeRoutine=null;sets=[];navTitle("resumen")
 }
 async function discardWorkout(){
   if(!activeSession)return
@@ -746,7 +797,7 @@ async function discardWorkout(){
   clearInterval(timerHandle);clearInterval(restHandle);restSeconds=0;paused=false
   activeSession=null;activeRoutine=null;sets=[]
   sessions=sessions.filter((session)=>session.id!==id)
-  await api(`sessions/${id}`,{method:"DELETE"})
+  await api(`sessions/${id}`,{method:"DELETE"});persistSnapshot()
   navTitle("entrenar");showNotice("Sesión descartada.")
 }
 document.querySelector("#theme-button").addEventListener("click",()=>{const order=["system","light","dark"];settings.theme=order[(order.indexOf(themeSetting())+1)%order.length];saveLocal();render();showNotice(settings.theme==="system"?"Tema: seguir el sistema.":settings.theme==="light"?"Tema claro activado.":"Tema oscuro activado.")})
@@ -769,21 +820,43 @@ const mobileNavigation=document.querySelector("#mobile-navigation")
 let loadedUid=null
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch((error) => {
-    console.warn("MyFlow could not register its service worker.", error)
-  })
+  const hadController = Boolean(navigator.serviceWorker.controller)
+  navigator.serviceWorker.register("/sw.js").then((registration) => {
+    // Busca nuevas versiones en segundo plano cada vez que vuelves a la app.
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") registration.update().catch(() => {}) })
+  }).catch((error) => console.warn("MyFlow no pudo registrar su service worker.", error))
   navigator.serviceWorker.addEventListener("message", (event) => {
     if (event.data?.type === "MYFLOW_SYNC_PENDING_WRITES") {
-      flushPendingWrites().then((ok) => event.ports[0]?.postMessage({ ok }))
+      flushOutbox().then((result) => event.ports[0]?.postMessage({ ok: !result?.remaining }))
+    }
+    if (event.data?.type === "MYFLOW_SYNC_DONE") {
+      refreshPending().then(() => { if (event.data.sent) { syncState = "synced"; updateSyncStatus(); showNotice(`${event.data.sent === 1 ? "1 cambio sincronizado" : `${event.data.sent} cambios sincronizados`} en segundo plano.`) } })
+    }
+    if (event.data?.type === "MYFLOW_DATA_REFRESHED" && currentUser && dataReady && !userIsBusy()) {
+      Sync.loadSnapshot(currentUser.uid).then(async (snapshot) => { if (snapshot) { applyData(Sync.overlay(currentUser.uid, snapshot, await Sync.list(currentUser.uid))); render() } })
     }
   })
+  // Cuando se activa una versión nueva de la app se ofrece recargar.
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController) showUpdateBanner() })
 }
-window.addEventListener("online", () => { updateSyncStatus(); flushPendingWrites() })
-window.addEventListener("offline", updateSyncStatus)
-window.addEventListener("pageshow", () => { updateSyncStatus(); flushPendingWrites() })
+function showUpdateBanner() {
+  if (document.querySelector(".update-banner")) return
+  const banner = document.createElement("div")
+  banner.className = "update-banner"
+  banner.setAttribute("role", "status")
+  banner.innerHTML = `<span>Hay una versión nueva de MyFlow.</span><button class="button" type="button">Actualizar</button><button class="icon-button" type="button" aria-label="Cerrar">×</button>`
+  banner.querySelector(".button").addEventListener("click", () => location.reload())
+  banner.querySelector(".icon-button").addEventListener("click", () => banner.remove())
+  document.body.append(banner)
+}
+window.addEventListener("online", () => { syncState = pendingCount ? "pending" : "synced"; flushOutbox.failures = 0; updateSyncStatus(); scheduleFlush(500) })
+window.addEventListener("offline", () => { syncState = "offline"; updateSyncStatus() })
+window.addEventListener("pageshow", () => { updateSyncStatus(); scheduleFlush(500) })
+window.addEventListener("focus", () => { if (pendingCount) scheduleFlush(500) })
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") flushPendingWrites()
+  if (document.visibilityState === "visible") { refreshPending(); scheduleFlush(300) }
 })
+document.querySelector("#sync-chip").addEventListener("click", () => { flushOutbox.failures = 0; flushOutbox({ manual: true }) })
 
 googleSignIn.addEventListener("click",async()=>{
   googleSignIn.disabled=true
@@ -832,6 +905,13 @@ if(firebaseLoadError) {
     loadedUid=user.uid
     await load()
     updateSyncStatus()
-    flushPendingWrites()
+    scheduleFlush(800)
+    registerPeriodicSync()
+  })
+  // Guarda un token de corta duración para que el service worker pueda subir la
+  // cola aunque la app esté cerrada. Firebase lo renueva cada hora.
+  onIdTokenChanged(auth,async(user)=>{
+    if(!user){Sync.clearAuth().catch(()=>{});Sync.updateBadge(0);return}
+    try{const result=await user.getIdTokenResult();await Sync.setAuth(user.uid,result.token,Date.parse(result.expirationTime))}catch{}
   })
 }

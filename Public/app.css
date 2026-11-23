@@ -205,3 +205,24 @@ nav [data-page="entrenar"].has-live::after{content:"";position:absolute;width:8p
 @media(prefers-reduced-motion:reduce){.live-pulse{animation:none}}
 .routine-grid>.empty,.history-list>.empty{grid-column:1/-1}
 .live-dot{background:none;padding:0;color:var(--text);font-weight:700}
+
+/* Sincronización: chip del encabezado, etiquetas pendientes y aviso de nueva versión */
+.sync-chip{display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 13px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);color:var(--muted);font-size:11px;font-weight:700;white-space:nowrap}
+.sync-chip-icon{flex:none}
+.sync-chip-count:empty{display:none}
+.sync-chip-count{min-width:18px;height:18px;padding:0 5px;display:inline-grid;place-items:center;border-radius:999px;background:var(--inverse-bg);color:var(--inverse-text);font-size:10px}
+.sync-chip[data-state=synced]{color:var(--muted)}
+.sync-chip[data-state=pending],.sync-chip[data-state=syncing],.sync-chip[data-state=auth]{color:var(--text);border-color:var(--text)}
+.sync-chip[data-state=offline]{color:var(--text);border-style:dashed;border-color:var(--text)}
+.sync-chip[data-state=syncing] .sync-chip-icon{animation:live-pulse 1.2s ease-in-out infinite}
+.sync-chip[data-state=offline] .sync-chip-icon{opacity:.55}
+@media(max-width:720px){.sync-chip .sync-chip-text{display:none}.sync-chip{min-width:38px;height:38px;padding:0 10px;justify-content:center}.sync-chip[data-state=synced]{width:38px;padding:0}.profile-chip{gap:6px}}
+.sidebar-bottom [data-state=offline],.sidebar-bottom [data-state=pending],.sidebar-bottom [data-state=auth]{color:var(--text);font-weight:700}
+.sidebar-bottom:has([data-state=offline]) .status-dot{background:transparent;border:1.5px solid var(--text);box-shadow:none}
+.sidebar-bottom:has([data-state=syncing]) .status-dot{animation:live-pulse 1.2s ease-in-out infinite}
+.pending-tag{display:inline-flex;align-items:center;gap:4px;margin:0 0 10px;padding:3px 9px;border:1px dashed var(--text);border-radius:999px;color:var(--text);font-size:9px;font-weight:700}
+.session-row .pending-tag{margin:6px 0 0}
+.update-banner{position:fixed;z-index:70;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;align-items:center;gap:10px;width:max-content;max-width:calc(100vw - 32px);padding:8px 8px 8px 18px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);box-shadow:0 12px 32px rgba(0,0,0,.25);font-size:12px}
+.update-banner .button{min-height:38px;padding:0 16px}
+.update-banner .icon-button{width:38px;height:38px}
+@media(min-width:721px){.update-banner{bottom:24px}}

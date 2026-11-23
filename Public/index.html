@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png?v=4">
   <link rel="mask-icon" href="/assets/safari-pinned-tab.svg?v=4" color="#111111">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css?v=20261123-ui1">
+  <link rel="stylesheet" href="/app.css?v=20261123-sync1">
   <title>MyFlow · Entrenamiento</title>
 </head>
 <body>
@@ -44,10 +44,10 @@
         <button data-page="perfil"><svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>Perfil</button>
         <button data-page="herramientas"><svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 7h8M8 11h2M14 11h2M8 15h2M14 15h2M8 18h8"/></svg>Herramientas</button>
       </nav>
-      <div class="sidebar-bottom"><span class="status-dot"></span><span id="sync-status" data-state="synced">Sincronizado con Firestore</span></div>
+      <div class="sidebar-bottom"><span class="status-dot"></span><span id="sync-status" data-state="synced">Todo sincronizado</span></div>
     </aside>
     <main>
-      <header class="topbar"><div><span class="eyebrow">TU ESPACIO DE ENTRENAMIENTO</span><h1 id="page-title">Inicio</h1></div><div class="profile-chip"><button id="theme-button" class="theme-button" aria-label="Cambiar tema">◐</button><button data-page="perfil" class="avatar" id="profile-initials">--</button><b id="profile-name-text">Mi perfil</b></div></header>
+      <header class="topbar"><div><span class="eyebrow">TU ESPACIO DE ENTRENAMIENTO</span><h1 id="page-title">Inicio</h1></div><div class="profile-chip"><button id="sync-chip" class="sync-chip" type="button" data-state="synced"><svg class="sync-chip-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 8.5a4.75 4.75 0 0 1-.5 9.5z"/></svg><span class="sync-chip-text">Sincronizado</span><span class="sync-chip-count"></span></button><button id="theme-button" class="theme-button" aria-label="Cambiar tema">◐</button><button data-page="perfil" class="avatar" id="profile-initials">--</button><b id="profile-name-text">Mi perfil</b></div></header>
       <div id="notice" class="notice" hidden role="status" aria-live="polite"></div>
       <section id="view" aria-live="polite"></section>
     </main>
@@ -77,6 +77,7 @@
   <dialog id="exercise-dialog"><form id="exercise-form"><header class="dialog-head"><div><span class="eyebrow">BIBLIOTECA</span><h2>Nuevo ejercicio</h2></div><button class="icon-button" type="button" data-close="exercise-dialog" aria-label="Cerrar">×</button></header><label>Nombre<input name="name" required maxlength="60"></label><label>Grupo muscular<select name="muscle"><option>Pecho</option><option>Espalda</option><option>Cuádriceps</option><option>Isquiotibiales</option><option>Glúteos</option><option>Hombros</option><option>Bíceps</option><option>Tríceps</option><option>Abdomen</option></select></label><label>Equipamiento<select name="equipment"><option>Barra</option><option>Mancuernas</option><option>Polea</option><option>Máquina</option><option>Peso corporal</option></select></label><footer><button type="button" class="button secondary" data-close="exercise-dialog">Cancelar</button><button class="button" type="submit">Guardar ejercicio</button></footer></form></dialog>
   <dialog id="schedule-dialog"><form id="schedule-form"><header class="dialog-head"><div><span class="eyebrow">CALENDARIO</span><h2>Programar rutina</h2></div><button class="icon-button" type="button" data-close="schedule-dialog" aria-label="Cerrar">×</button></header><label>Rutina<select name="routine" required></select></label><label>Fecha<input name="date" type="date" required></label><footer><button class="button secondary" type="button" data-close="schedule-dialog">Cancelar</button><button class="button" type="submit">Programar</button></footer></form></dialog>
   <script src="/share-result.js"></script>
-  <script type="module" src="/app.js?v=20261123-ui1"></script>
+  <script src="/sync-core.js?v=20261123-sync1"></script>
+  <script type="module" src="/app.js?v=20261123-sync1"></script>
 </body>
 </html>
